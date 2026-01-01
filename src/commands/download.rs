@@ -91,7 +91,7 @@ async fn fetch_manifest_from_relays(
         }
 
         client.connect().await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        client.wait_for_connection(Duration::from_secs(5)).await;
 
         match client.fetch_events(filter.clone(), Duration::from_secs(10)).await {
             Ok(events) => {
@@ -245,7 +245,7 @@ pub async fn execute(
         }
 
         client.connect().await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        client.wait_for_connection(Duration::from_secs(5)).await;
 
         let start = Instant::now();
 

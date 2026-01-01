@@ -80,20 +80,15 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
 
     // Connect with timeout
     client.connect().await;
+    client.wait_for_connection(timeout).await;
 
-    // Wait for connection (with timeout)
-    let connect_start = Instant::now();
-    let mut connected = false;
-    while connect_start.elapsed() < timeout {
-        let relays = client.relays().await;
-        if let Some((_, relay)) = relays.into_iter().next() {
-            if relay.is_connected() {
-                connected = true;
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    // Check if connection was established
+    let connected = client
+        .relays()
+        .await
+        .into_iter()
+        .next()
+        .is_some_and(|(_, relay)| relay.is_connected());
 
     if !connected {
         client.disconnect().await;

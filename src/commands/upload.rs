@@ -95,9 +95,7 @@ pub async fn execute(
     }
 
     client.connect().await;
-
-    // Wait a bit for connections to establish
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    client.wait_for_connection(Duration::from_secs(10)).await;
 
     // Verify at least one relay is connected
     let connected_relays: Vec<_> = client
@@ -269,7 +267,7 @@ async fn publish_to_index_relays(
     }
 
     client.connect().await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    client.wait_for_connection(Duration::from_secs(10)).await;
 
     // 2. Publish manifest to index relays
     let manifest_event_id = match client.send_event_builder(manifest_event).await {

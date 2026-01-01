@@ -46,7 +46,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
     }
 
     client.connect().await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    client.wait_for_connection(Duration::from_secs(5)).await;
 
     // 3. Fetch file index
     println!("Fetching file index...\n");
