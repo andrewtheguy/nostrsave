@@ -246,22 +246,28 @@ pub async fn execute(
             break;
         }
 
-        // Use targeted filter only when less than half chunks are missing
+        // Use targeted filters only when less than half chunks are missing
         // (avoids very large filters when relay failed or has few chunks)
-        let filter = if missing_indices.len() * 2 < manifest.total_chunks {
+        let filters: Vec<Filter> = if missing_indices.len() * 2 < manifest.total_chunks {
             create_chunk_filter_for_indices(
                 &manifest.file_hash,
                 &missing_indices,
                 Some(&author_pubkey),
-            )
+            )?
         } else {
-            create_chunk_filter(&manifest.file_hash, Some(&author_pubkey))
+            vec![create_chunk_filter(&manifest.file_hash, Some(&author_pubkey))]
         };
 
         pb.set_message(format!("relay {}/{}", relay_idx + 1, relay_list.len()));
 
         if verbose {
-            pb.suspend(|| println!("  Fetching from: {} ({} chunks needed)", relay_url, missing_indices.len()));
+            pb.suspend(|| println!(
+                "  Fetching from: {} ({} chunks needed, {} filter batch{})",
+                relay_url,
+                missing_indices.len(),
+                filters.len(),
+                if filters.len() == 1 { "" } else { "es" }
+            ));
         }
 
         let client = Client::new(client_keys.clone());
@@ -280,44 +286,47 @@ pub async fn execute(
 
         let start = Instant::now();
 
-        match client.fetch_events(filter, Duration::from_secs(30)).await {
-            Ok(events) => {
-                relay_stat.connected = true;
-                relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
+        // Fetch events for each filter batch
+        for filter in filters {
+            match client.fetch_events(filter, Duration::from_secs(30)).await {
+                Ok(events) => {
+                    relay_stat.connected = true;
 
-                for event in events.iter() {
-                    match parse_chunk_event(event, decrypt_keys.as_ref()) {
-                        Ok(chunk_data) => {
-                            relay_stat.chunks_found.insert(chunk_data.index);
+                    for event in events.iter() {
+                        match parse_chunk_event(event, decrypt_keys.as_ref()) {
+                            Ok(chunk_data) => {
+                                relay_stat.chunks_found.insert(chunk_data.index);
 
-                            // Only store if we don't have this chunk yet
-                            if let std::collections::hash_map::Entry::Vacant(e) = all_chunks.entry(chunk_data.index) {
-                                e.insert(chunk_data.data);
-                                pb.set_position(all_chunks.len() as u64);
+                                // Only store if we don't have this chunk yet
+                                if let std::collections::hash_map::Entry::Vacant(e) = all_chunks.entry(chunk_data.index) {
+                                    e.insert(chunk_data.data);
+                                    pb.set_position(all_chunks.len() as u64);
+                                }
                             }
-                        }
-                        Err(e) => {
-                            if verbose {
-                                pb.suspend(|| eprintln!("    Failed to parse event: {}", e));
+                            Err(e) => {
+                                if verbose {
+                                    pb.suspend(|| eprintln!("    Failed to parse event: {}", e));
+                                }
                             }
                         }
                     }
                 }
+                Err(e) => {
+                    if verbose {
+                        pb.suspend(|| eprintln!("    Fetch error: {}", e));
+                    }
+                }
+            }
+        }
 
-                if verbose {
-                    pb.suspend(|| println!(
-                        "    Found {} chunks in {}ms",
-                        relay_stat.chunks_found.len(),
-                        relay_stat.fetch_time_ms
-                    ));
-                }
-            }
-            Err(e) => {
-                relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
-                if verbose {
-                    pb.suspend(|| eprintln!("    Fetch error: {}", e));
-                }
-            }
+        relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
+
+        if verbose {
+            pb.suspend(|| println!(
+                "    Found {} chunks in {}ms",
+                relay_stat.chunks_found.len(),
+                relay_stat.fetch_time_ms
+            ));
         }
 
         stats.relay_stats.insert(relay_url.clone(), relay_stat);

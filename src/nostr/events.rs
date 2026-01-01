@@ -1,5 +1,6 @@
 use base64::Engine;
 use nostr_sdk::prelude::*;
+use std::collections::HashSet;
 
 use crate::config::{EncryptionAlgorithm, CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
 use crate::crypto;
@@ -93,29 +94,74 @@ pub fn create_chunk_filter(file_hash: &str, pubkey: Option<&PublicKey>) -> Filte
     filter
 }
 
-/// Create a filter to fetch specific chunks by their indices
+/// Default maximum identifiers per filter to avoid exceeding relay limits
+const DEFAULT_MAX_IDS_PER_FILTER: usize = 100;
+
+/// Create filters to fetch specific chunks by their indices
 ///
 /// Uses `d` tag identifiers (`{file_hash}:{chunk_index}`) for targeted queries.
 /// More efficient than fetching all chunks when only a few are missing.
+///
+/// Indices are deduplicated (preserving order) and split into batches to avoid
+/// exceeding relay filter limits. Each batch produces one filter.
+///
+/// # Arguments
+/// * `file_hash` - The file hash to query chunks for
+/// * `indices` - Chunk indices to fetch (duplicates are removed)
+/// * `pubkey` - Optional author public key to filter by
+///
+/// # Returns
+/// * `Ok(Vec<Filter>)` - One or more filters, each with up to 100 identifiers
+/// * `Err` - If `indices` is empty (would create an unconstrained filter)
+///
+/// # Example
+/// ```ignore
+/// let filters = create_chunk_filter_for_indices("sha256:abc", &[0, 5, 10], Some(&pk))?;
+/// for filter in filters {
+///     let events = client.fetch_events(filter, timeout).await?;
+///     // process events...
+/// }
+/// ```
 pub fn create_chunk_filter_for_indices(
     file_hash: &str,
     indices: &[usize],
     pubkey: Option<&PublicKey>,
-) -> Filter {
-    let identifiers: Vec<String> = indices
+) -> anyhow::Result<Vec<Filter>> {
+    if indices.is_empty() {
+        return Err(anyhow::anyhow!("indices cannot be empty"));
+    }
+
+    // Deduplicate indices while preserving order
+    let mut seen = HashSet::new();
+    let unique_indices: Vec<usize> = indices
+        .iter()
+        .filter(|i| seen.insert(**i))
+        .copied()
+        .collect();
+
+    // Build identifiers
+    let identifiers: Vec<String> = unique_indices
         .iter()
         .map(|i| format!("{}:{}", file_hash, i))
         .collect();
 
-    let mut filter = Filter::new()
-        .kind(Kind::Custom(CHUNK_EVENT_KIND))
-        .identifiers(identifiers);
+    // Split into batches and create filters
+    let filters: Vec<Filter> = identifiers
+        .chunks(DEFAULT_MAX_IDS_PER_FILTER)
+        .map(|batch| {
+            let mut filter = Filter::new()
+                .kind(Kind::Custom(CHUNK_EVENT_KIND))
+                .identifiers(batch.to_vec());
 
-    if let Some(pk) = pubkey {
-        filter = filter.author(*pk);
-    }
+            if let Some(pk) = pubkey {
+                filter = filter.author(*pk);
+            }
 
-    filter
+            filter
+        })
+        .collect();
+
+    Ok(filters)
 }
 
 /// Parse a chunk event to extract chunk data
