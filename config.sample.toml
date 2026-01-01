@@ -1,0 +1,21 @@
+# nostrsave configuration
+# Copy to ~/.config/nostrsave/config.toml
+
+[identity]
+# Option 1: Inline private key (hex or nsec format)
+# private_key = "nsec1..."
+
+# Option 2: Path to file containing private key (supports ~ expansion)
+key_file = "~/.config/nostrsave/nostr.key"
+
+[relays]
+# Relay URLs for uploading and listing files
+# Downloads use the relay list stored in the manifest
+# Run `nostrsave best-relays` after `nostrsave discover-relays` to get optimal list
+urls = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://nostr.wine",
+    "wss://relay.primal.net",
+    "wss://relay.snort.social"
+]

@@ -34,7 +34,14 @@ nostrsave download --hash sha256:abc123...
 
 ## Configuration
 
-Create `~/.config/nostrsave/config.toml`:
+Copy the sample config and edit:
+
+```bash
+mkdir -p ~/.config/nostrsave
+cp config.sample.toml ~/.config/nostrsave/config.toml
+```
+
+Or create `~/.config/nostrsave/config.toml`:
 
 ```toml
 [identity]
@@ -124,6 +131,24 @@ Generate a new Nostr keypair.
 
 ```bash
 nostrsave keygen
+```
+
+### best-relays
+
+Print top relays from discovery results in TOML format.
+
+```bash
+nostrsave best-relays [JSON_FILE] [OPTIONS]
+
+Options:
+  -c, --count <N>    Number of relays (default: 10)
+```
+
+Example workflow:
+```bash
+nostrsave discover-relays
+nostrsave best-relays -c 10
+# Copy output to config.toml [relays] section
 ```
 
 ## How It Works
