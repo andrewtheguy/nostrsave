@@ -31,11 +31,15 @@ impl FileIndex {
         }
     }
 
-    /// Add an entry, avoiding duplicates by file_hash
+    /// Add an entry, replacing any existing entry with the same file_hash
     pub fn add_entry(&mut self, entry: FileIndexEntry) {
-        // Remove existing entry with same hash (update case)
-        self.entries.retain(|e| e.file_hash != entry.file_hash);
-        self.entries.push(entry);
+        if let Some(pos) = self.entries.iter().position(|e| e.file_hash == entry.file_hash) {
+            // Update existing entry in-place
+            self.entries[pos] = entry;
+        } else {
+            // New entry
+            self.entries.push(entry);
+        }
     }
 
     /// Get number of files in the index
