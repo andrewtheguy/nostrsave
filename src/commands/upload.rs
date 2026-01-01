@@ -11,7 +11,14 @@ use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Maximum number of retry attempts for publishing events
+const MAX_RETRIES: u32 = 3;
+/// Base delay for exponential backoff (doubles each retry)
+const BASE_RETRY_DELAY_MS: u64 = 500;
+/// Maximum delay cap for retries
+const MAX_RETRY_DELAY_MS: u64 = 5000;
 
 pub async fn execute(
     file: PathBuf,
@@ -169,20 +176,55 @@ pub async fn execute(
             filename: &file_name,
             encryption,
         };
-        let event_builder = create_chunk_event(&metadata, &content)?;
 
-        match client.send_event_builder(event_builder).await {
-            Ok(output) => {
-                let event_id = output.val.to_bech32()?;
-                if verbose {
-                    println!("  Chunk {} -> {}", chunk.index, event_id);
+        // Retry loop with exponential backoff
+        let mut last_error = None;
+        for attempt in 0..=MAX_RETRIES {
+            let event_builder = create_chunk_event(&metadata, &content)?;
+
+            match client.send_event_builder(event_builder).await {
+                Ok(output) => {
+                    let event_id = output.val.to_bech32()?;
+                    if verbose {
+                        println!("  Chunk {} -> {}", chunk.index, event_id);
+                    }
+                    manifest.add_chunk(chunk.index, event_id, chunk.hash.clone())?;
+                    last_error = None;
+                    break;
                 }
-                manifest.add_chunk(chunk.index, event_id, chunk.hash.clone())?;
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < MAX_RETRIES {
+                        // Calculate delay with exponential backoff and jitter
+                        let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+                        let jitter = (Instant::now().elapsed().subsec_nanos() % 200) as u64;
+                        let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+
+                        if verbose {
+                            pb.suspend(|| {
+                                eprintln!(
+                                    "  Chunk {} failed (attempt {}/{}), retrying in {}ms...",
+                                    chunk.index,
+                                    attempt + 1,
+                                    MAX_RETRIES + 1,
+                                    delay
+                                );
+                            });
+                        }
+                        tokio::time::sleep(Duration::from_millis(delay)).await;
+                    }
+                }
             }
-            Err(e) => {
-                pb.finish_and_clear();
-                return Err(anyhow::anyhow!("Failed to publish chunk {}: {}", chunk.index, e));
-            }
+        }
+
+        if let Some(e) = last_error {
+            pb.finish_and_clear();
+            return Err(anyhow::anyhow!(
+                "Failed to publish chunk {} after {} attempts: {}",
+                chunk.index,
+                MAX_RETRIES + 1,
+                e
+            ));
         }
 
         pb.inc(1);
