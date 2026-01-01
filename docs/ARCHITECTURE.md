@@ -216,7 +216,7 @@ A relay is considered "working" only if ALL conditions pass:
 | `can_write` | Successfully published a test event with NIP-44 encrypted payload |
 | `can_read` | Successfully fetched the test event back and verified decryption matches |
 
-The test uses the same event kind (30089) and encryption (NIP-44) as actual file uploads.
+The test uses the same event kind (30078) and encryption (NIP-44) as actual file uploads.
 
 ### Output Fields
 

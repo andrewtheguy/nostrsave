@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
 /// Kind for test chunk events (same as file chunks)
-const TEST_CHUNK_KIND: u16 = 30089;
+const TEST_CHUNK_KIND: u16 = 30078;
 
 /// Result of testing a single relay
 #[derive(Debug, Clone, Serialize)]
