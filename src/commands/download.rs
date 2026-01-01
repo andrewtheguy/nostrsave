@@ -1,5 +1,5 @@
 use crate::chunking::{FileAssembler, FileChunker};
-use crate::config::get_index_relays;
+use crate::config::{get_index_relays, get_private_key};
 use crate::manifest::Manifest;
 use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -125,6 +125,7 @@ pub async fn execute(
     manifest_path: Option<PathBuf>,
     file_hash: Option<String>,
     output: Option<PathBuf>,
+    key_file: Option<&str>,
     show_stats: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
@@ -147,9 +148,31 @@ pub async fn execute(
     println!("File hash:   {}", manifest.file_hash);
     println!("Chunks:      {}", manifest.total_chunks);
     println!("Chunk size:  {} bytes", manifest.chunk_size);
+    println!("Encrypted:   {}", if manifest.encrypted { "yes (NIP-44)" } else { "no" });
 
-    // 2. Setup client (generate random keys for read-only access)
-    let keys = Keys::generate();
+    // 2. Setup decryption keys if file is encrypted
+    let decrypt_keys = if manifest.encrypted {
+        let private_key = get_private_key(key_file)?;
+        let keys = Keys::parse(&private_key)?;
+
+        // Verify pubkey matches manifest
+        let manifest_pubkey = PublicKey::parse(&manifest.pubkey)?;
+        if keys.public_key() != manifest_pubkey {
+            return Err(anyhow::anyhow!(
+                "Key mismatch: your pubkey doesn't match the file's pubkey.\n\
+                 File was encrypted by: {}\n\
+                 Your pubkey: {}",
+                manifest.pubkey,
+                keys.public_key().to_bech32()?
+            ));
+        }
+        Some(keys)
+    } else {
+        None
+    };
+
+    // Use random keys for relay connection (read-only access)
+    let client_keys = Keys::generate();
 
     // Parse pubkey from manifest
     let author_pubkey = PublicKey::parse(&manifest.pubkey)?;
@@ -190,7 +213,7 @@ pub async fn execute(
             pb.suspend(|| println!("  Fetching from: {}", relay_url));
         }
 
-        let client = Client::new(keys.clone());
+        let client = Client::new(client_keys.clone());
         let mut relay_stat = RelayStats::default();
 
         if let Err(e) = client.add_relay(relay_url).await {
@@ -212,7 +235,7 @@ pub async fn execute(
                 relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
 
                 for event in events.iter() {
-                    match parse_chunk_event(event) {
+                    match parse_chunk_event(event, decrypt_keys.as_ref()) {
                         Ok(chunk_data) => {
                             relay_stat.chunks_found.insert(chunk_data.index);
 

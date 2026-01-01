@@ -2,6 +2,7 @@ mod chunking;
 mod cli;
 mod commands;
 mod config;
+mod crypto;
 mod error;
 mod manifest;
 mod nostr;
@@ -20,8 +21,9 @@ async fn main() -> anyhow::Result<()> {
             file,
             chunk_size,
             output,
+            no_encrypt,
         } => {
-            commands::upload::execute(file, chunk_size, output, cli.key_file.as_deref(), cli.verbose).await?;
+            commands::upload::execute(file, chunk_size, output, cli.key_file.as_deref(), no_encrypt, cli.verbose).await?;
         }
         Commands::Download {
             manifest,
@@ -29,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
             output,
             stats,
         } => {
-            commands::download::execute(manifest, hash, output, stats, cli.verbose).await?;
+            commands::download::execute(manifest, hash, output, cli.key_file.as_deref(), stats, cli.verbose).await?;
         }
         Commands::Keygen => {
             let keys = nostr_sdk::Keys::generate();

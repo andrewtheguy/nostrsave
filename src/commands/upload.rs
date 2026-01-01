@@ -1,5 +1,7 @@
+use base64::Engine;
 use crate::chunking::FileChunker;
 use crate::config::{get_data_relays, get_index_relays, get_private_key};
+use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
     create_chunk_event, create_file_index_event, create_file_index_filter, create_manifest_event,
@@ -15,6 +17,7 @@ pub async fn execute(
     chunk_size: usize,
     output: Option<PathBuf>,
     key_file: Option<&str>,
+    no_encrypt: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load config - private key and relays
@@ -106,6 +109,7 @@ pub async fn execute(
     }
 
     // 5. Create manifest (store data relays in manifest for download)
+    let encrypt = !no_encrypt;
     let mut manifest = Manifest::new(
         file_name.clone(),
         file_hash.clone(),
@@ -113,7 +117,10 @@ pub async fn execute(
         chunk_size,
         keys.public_key().to_bech32()?,
         data_relays.clone(),
+        encrypt,
     );
+
+    println!("Encryption: {}", if encrypt { "enabled (NIP-44)" } else { "disabled" });
 
     // 6. Publish chunks with progress
     println!("\nUploading {} chunks...", chunks.len());
@@ -125,6 +132,13 @@ pub async fn execute(
     );
 
     for chunk in &chunks {
+        // Prepare content: encrypt or base64-encode
+        let content = if encrypt {
+            crypto::encrypt_chunk(&keys, &chunk.data)?
+        } else {
+            base64::engine::general_purpose::STANDARD.encode(&chunk.data)
+        };
+
         let metadata = ChunkMetadata {
             file_hash: &file_hash,
             chunk_index: chunk.index,
@@ -132,8 +146,9 @@ pub async fn execute(
             chunk_hash: &chunk.hash,
             chunk_data: &chunk.data,
             filename: &file_name,
+            encrypted: encrypt,
         };
-        let event_builder = create_chunk_event(&metadata)?;
+        let event_builder = create_chunk_event(&metadata, &content)?;
 
         match client.send_event_builder(event_builder).await {
             Ok(output) => {

@@ -62,6 +62,10 @@ pub enum Commands {
         /// Output manifest file path (defaults to <filename>.nostrsave)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Disable NIP-44 encryption (encryption is ON by default)
+        #[arg(long)]
+        no_encrypt: bool,
     },
 
     /// Download a file from Nostr relays
