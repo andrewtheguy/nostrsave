@@ -249,7 +249,9 @@ pub async fn execute(
         manifest.created_at,
         encryption,
     )?;
-    publish_file_index_to_relays(&client, &keys, entry.clone(), verbose).await;
+    if let Err(e) = publish_file_index_to_relays(&client, &keys, entry.clone(), verbose).await {
+        eprintln!("  Warning: Failed to publish file index to data relays: {}", e);
+    }
 
     client.disconnect().await;
 
@@ -351,7 +353,7 @@ async fn publish_to_index_relays(
     };
 
     // 3. Update file index on index relays
-    publish_file_index_to_relays(&client, keys, entry, verbose).await;
+    publish_file_index_to_relays(&client, keys, entry, verbose).await?;
 
     client.disconnect().await;
     Ok(manifest_event_id)
@@ -363,7 +365,7 @@ async fn publish_file_index_to_relays(
     keys: &Keys,
     entry: FileIndexEntry,
     verbose: bool,
-) {
+) -> anyhow::Result<()> {
     // Fetch existing file index
     let filter = create_file_index_filter(&keys.public_key());
     let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
@@ -401,25 +403,12 @@ async fn publish_file_index_to_relays(
     // Add entry and publish
     index.add_entry(entry);
 
-    match create_file_index_event(&index) {
-        Ok(event_builder) => {
-            match client.send_event_builder(event_builder).await {
-                Ok(_) => {
-                    if verbose {
-                        println!("  Index updated with {} files", index.len());
-                    }
-                }
-                Err(e) => {
-                    if verbose {
-                        eprintln!("  Failed to publish file index: {}", e);
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            if verbose {
-                eprintln!("  Failed to create file index event: {}", e);
-            }
-        }
+    let event_builder = create_file_index_event(&index)?;
+    client.send_event_builder(event_builder).await?;
+
+    if verbose {
+        println!("  Index updated with {} files", index.len());
     }
+
+    Ok(())
 }
