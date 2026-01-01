@@ -89,7 +89,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
     );
     println!("  {}", "-".repeat(105));
 
-    for (i, entry) in index.entries.iter().enumerate() {
+    for (i, entry) in index.entries().iter().enumerate() {
         let size_str = format_size(entry.file_size());
         let date_str = format_timestamp(entry.uploaded_at());
         let enc_str = entry.encryption().to_string();
@@ -119,7 +119,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
 
     // Always show full hashes for easy copying
     println!("\nHashes:");
-    for (i, entry) in index.entries.iter().enumerate() {
+    for (i, entry) in index.entries().iter().enumerate() {
         println!("  #{}: {}", i + 1, entry.file_hash());
     }
 

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Deserialize)]
@@ -10,6 +10,12 @@ struct RelayDiscoveryOutput {
 struct RelayResult {
     url: String,
     round_trip_ms: u64,
+}
+
+/// Output structure for TOML serialization
+#[derive(Serialize)]
+struct RelayUrls {
+    urls: Vec<String>,
 }
 
 pub fn execute(input: PathBuf, count: usize) -> anyhow::Result<()> {
@@ -29,19 +35,18 @@ pub fn execute(input: PathBuf, count: usize) -> anyhow::Result<()> {
     let mut relays = data.working_relays;
     relays.sort_by_key(|r| r.round_trip_ms);
 
-    let best: Vec<&str> = relays
+    let urls: Vec<String> = relays
         .iter()
         .take(count)
-        .map(|r| r.url.as_str())
+        .map(|r| r.url.clone())
         .collect();
 
-    // Print in TOML array format
-    println!("urls = [");
-    for (i, url) in best.iter().enumerate() {
-        let comma = if i < best.len() - 1 { "," } else { "" };
-        println!("    \"{}\"{}", url, comma);
-    }
-    println!("]");
+    // Serialize to TOML format
+    let output = RelayUrls { urls };
+    let toml_str = toml::to_string_pretty(&output)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize to TOML: {}", e))?;
+
+    print!("{}", toml_str);
 
     Ok(())
 }

@@ -172,7 +172,7 @@ Tags:
 - **Maximum:** 65408 bytes (tested limit for reliable relay storage)
 - **Range:** 1 KB to 65408 bytes (tested max)
 - **Hash algorithm:** SHA-256 (computed on original, unencrypted data)
-- **Encoding:** NIP-44 encrypted (default) or base64
+- **Encryption:** NIP-44 (default) or none; unencrypted data is base64-encoded
 
 ### Why Chunking?
 

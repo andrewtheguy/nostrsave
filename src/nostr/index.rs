@@ -58,13 +58,31 @@ impl FileIndexEntry {
             ));
         }
 
-        // Validate file_name: non-empty and no path separators
+        // Validate file_name: non-empty, no path separators, no traversal, no control chars
         if file_name.is_empty() {
             return Err(anyhow::anyhow!("Invalid file_name: cannot be empty"));
         }
         if file_name.contains('/') || file_name.contains('\\') {
             return Err(anyhow::anyhow!(
                 "Invalid file_name: cannot contain path separators"
+            ));
+        }
+        // Reject directory traversal attempts
+        if file_name == ".." || file_name == "." {
+            return Err(anyhow::anyhow!(
+                "Invalid file_name: cannot be '.' or '..'"
+            ));
+        }
+        // Reject NUL bytes
+        if file_name.contains('\0') {
+            return Err(anyhow::anyhow!(
+                "Invalid file_name: cannot contain NUL bytes"
+            ));
+        }
+        // Reject control characters (ASCII 0x00-0x1F and 0x7F)
+        if file_name.chars().any(|c| c.is_control()) {
+            return Err(anyhow::anyhow!(
+                "Invalid file_name: cannot contain control characters"
             ));
         }
 
@@ -152,8 +170,8 @@ impl<'de> Deserialize<'de> for FileIndexEntry {
 /// The file index containing all uploaded files for a user
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileIndex {
-    pub version: u8,
-    pub entries: Vec<FileIndexEntry>,
+    version: u8,
+    entries: Vec<FileIndexEntry>,
 }
 
 impl FileIndex {
@@ -190,6 +208,18 @@ impl FileIndex {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Get the index version
+    #[must_use]
+    pub fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// Get read-only access to entries
+    #[must_use]
+    pub fn entries(&self) -> &[FileIndexEntry] {
+        &self.entries
     }
 }
 
@@ -231,11 +261,11 @@ pub fn parse_file_index_event(event: &Event) -> anyhow::Result<FileIndex> {
 
     let index: FileIndex = serde_json::from_str(&event.content)?;
 
-    if index.version != CURRENT_FILE_INDEX_VERSION {
+    if index.version() != CURRENT_FILE_INDEX_VERSION {
         return Err(anyhow::anyhow!(
             "Unsupported file index version: expected {}, got {}",
             CURRENT_FILE_INDEX_VERSION,
-            index.version
+            index.version()
         ));
     }
 
@@ -252,7 +282,7 @@ mod tests {
     #[test]
     fn test_file_index_new() {
         let index = FileIndex::new();
-        assert_eq!(index.version, CURRENT_FILE_INDEX_VERSION);
+        assert_eq!(index.version(), CURRENT_FILE_INDEX_VERSION);
         assert!(index.is_empty());
     }
 
@@ -323,6 +353,61 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("path separator"));
+
+        // Directory traversal ".."
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "..".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("'..'"));
+
+        // Current directory "."
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            ".".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("'.'"));
+
+        // NUL byte
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "file\0name.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("NUL"));
+
+        // Control character (tab)
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "file\tname.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("control"));
+
+        // Control character (newline)
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "file\nname.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("control"));
     }
 
     #[test]
@@ -394,6 +479,6 @@ mod tests {
         index.add_entry(entry2);
 
         assert_eq!(index.len(), 1);
-        assert_eq!(index.entries[0].file_name(), "test_updated.txt");
+        assert_eq!(index.entries()[0].file_name(), "test_updated.txt");
     }
 }
