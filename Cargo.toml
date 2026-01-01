@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Nostr
-nostr-sdk = "0.43"
+nostr-sdk = "0.44.1"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
