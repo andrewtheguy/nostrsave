@@ -31,7 +31,7 @@ impl Manifest {
         pubkey: String,
         relays: Vec<String>,
     ) -> Self {
-        let total_chunks = (file_size as usize + chunk_size - 1) / chunk_size;
+        let total_chunks = (file_size as usize).div_ceil(chunk_size);
         Self {
             version: 1,
             file_name,

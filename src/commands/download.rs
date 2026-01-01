@@ -139,8 +139,8 @@ pub async fn execute(
                             relay_stat.chunks_found.insert(chunk_data.index);
 
                             // Only store if we don't have this chunk yet
-                            if !all_chunks.contains_key(&chunk_data.index) {
-                                all_chunks.insert(chunk_data.index, chunk_data.data);
+                            if let std::collections::hash_map::Entry::Vacant(e) = all_chunks.entry(chunk_data.index) {
+                                e.insert(chunk_data.data);
                             }
                         }
                         Err(e) => {
