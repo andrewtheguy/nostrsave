@@ -311,8 +311,9 @@ async fn publish_to_index_relays(
             }
         }
         Err(e) => {
+            eprintln!("WARNING: Failed to fetch existing index. Previous entries may be overwritten.");
             if verbose {
-                eprintln!("  Failed to fetch index: {}", e);
+                eprintln!("  Error: {}", e);
             }
             FileIndex::new()
         }
@@ -337,8 +338,9 @@ async fn publish_to_index_relays(
                 }
             }
             Err(e) => {
+                eprintln!("WARNING: Failed to publish file index. File may not appear in 'nostrsave list'.");
                 if verbose {
-                    eprintln!("  Failed to publish index: {}", e);
+                    eprintln!("  Error: {}", e);
                 }
             }
         }

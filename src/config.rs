@@ -131,12 +131,15 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 pub fn load_config() -> Option<Config> {
     for path in toml_config_paths() {
         if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                match toml::from_str(&content) {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match toml::from_str(&content) {
                     Ok(config) => return Some(config),
                     Err(e) => {
                         eprintln!("Warning: Failed to parse {}: {}", path.display(), e);
                     }
+                },
+                Err(e) => {
+                    eprintln!("Warning: Failed to read {}: {}", path.display(), e);
                 }
             }
         }
