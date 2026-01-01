@@ -7,6 +7,7 @@ src/
 ├── main.rs              # Entry point, CLI argument handling
 ├── cli.rs               # Clap command definitions
 ├── config.rs            # TOML config, relay loading, constants
+├── crypto.rs            # NIP-44 encryption/decryption
 ├── error.rs             # Error types
 ├── manifest.rs          # Manifest structure and serialization
 ├── commands/
@@ -14,7 +15,8 @@ src/
 │   ├── upload.rs        # Upload command implementation
 │   ├── download.rs      # Download command implementation
 │   ├── list.rs          # List command implementation
-│   └── discover_relays.rs  # Relay discovery command
+│   ├── discover_relays.rs  # Relay discovery command
+│   └── best_relays.rs   # Best relays command
 ├── chunking/
 │   ├── mod.rs
 │   ├── splitter.rs      # File chunking logic
@@ -34,13 +36,13 @@ src/
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│  Read File  │────▶│ Split Chunks │────▶│ Create Events   │
+│  Read File  │────▶│ Split Chunks │────▶│ Encrypt (NIP-44)│
 └─────────────┘     └──────────────┘     └─────────────────┘
                                                   │
                                                   ▼
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Save Local  │◀────│ Publish      │◀────│ Sign Events     │
-│ Manifest    │     │ Manifest     │     │ (Chunks)        │
+│ Save Local  │◀────│ Publish      │◀────│ Sign & Publish  │
+│ Manifest    │     │ Manifest     │     │ Chunk Events    │
 └─────────────┘     └──────────────┘     └─────────────────┘
                            │
                            ▼
@@ -60,7 +62,8 @@ src/
                                                   │
                                                   ▼
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Write File  │◀────│ Verify Hash  │◀────│ Reassemble      │
+│ Write File  │◀────│ Verify Hash  │◀────│ Decrypt (NIP-44)│
+│             │     │              │     │ & Reassemble    │
 └─────────────┘     └──────────────┘     └─────────────────┘
 ```
 
@@ -72,7 +75,7 @@ Parameterized replaceable event storing one file chunk.
 
 ```
 Kind: 30078
-Content: <base64-encoded chunk data>
+Content: <NIP-44 encrypted or base64-encoded chunk data>
 Tags:
   - ["d", "<file_hash>:<chunk_index>"]     # Unique identifier
   - ["x", "<file_hash>"]                   # File hash for filtering
@@ -80,6 +83,7 @@ Tags:
   - ["hash", "<chunk_hash>"]               # Chunk integrity
   - ["filename", "<name>"]                 # Original filename
   - ["size", "<bytes>"]                    # Chunk size
+  - ["encrypted", "true|false"]            # Encryption flag
 ```
 
 ### Manifest Event (Kind 30079)
@@ -103,10 +107,11 @@ Tags:
   "file_name": "photo.jpg",
   "file_hash": "sha256:abc123...",
   "file_size": 1234567,
-  "chunk_size": 65536,
+  "chunk_size": 65535,
   "total_chunks": 19,
   "created_at": 1704067200,
   "pubkey": "npub1...",
+  "encrypted": true,
   "chunks": [
     {"index": 0, "event_id": "note1...", "hash": "sha256:..."},
     ...
@@ -148,31 +153,41 @@ Tags:
 ┌─────────────────────────────────────────────────────────┐
 │                    Priority Order                        │
 ├─────────────────────────────────────────────────────────┤
-│ 1. CLI flags (-k, --key-file, -r)                       │
+│ 1. CLI flag (--key-file)                                │
 │    ↓                                                     │
 │ 2. TOML config (~/.config/nostrsave/config.toml)        │
+│    - [identity] private_key or key_file                 │
+│    - [data_relays] for chunk storage                    │
+│    - [index_relays] for manifest/index discovery        │
 │    ↓                                                     │
-│ 3. Legacy file (~/.config/nostrsave/relays.txt)         │
-│    ↓                                                     │
-│ 4. Environment (NOSTRSAVE_RELAYS)                       │
-│    ↓                                                     │
-│ 5. Fallback defaults                                     │
+│ 3. Fallback relays (index relays only)                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## Chunking Strategy
 
-- **Default chunk size:** 64 KB
-- **Range:** 1 KB to 1 MB
-- **Hash algorithm:** SHA-256
-- **Encoding:** Base64 for event content
+- **Default chunk size:** 65535 bytes (NIP-44 maximum)
+- **Range:** 1 KB to 65535 bytes
+- **Hash algorithm:** SHA-256 (computed on original, unencrypted data)
+- **Encoding:** NIP-44 encrypted (default) or base64
 
 ### Why Chunking?
 
 1. **Relay limits:** Most relays have event size limits
-2. **Parallel fetching:** Chunks can be fetched concurrently
-3. **Resumability:** Failed uploads/downloads can resume
-4. **Deduplication:** Identical chunks share the same hash
+2. **NIP-44 limits:** Maximum plaintext size is 65535 bytes
+3. **Parallel fetching:** Chunks can be fetched concurrently
+4. **Resumability:** Failed uploads/downloads can resume
+5. **Deduplication:** Identical chunks share the same hash
+
+## Encryption (NIP-44)
+
+Files are encrypted by default using NIP-44 self-encryption:
+
+1. **Self-encryption:** Chunks are encrypted using your secret key + your public key
+2. **Only you can decrypt:** Only the owner (matching private key) can decrypt the file
+3. **Hash integrity:** File and chunk hashes are computed on original (unencrypted) data
+4. **Per-chunk encryption:** Each chunk is encrypted independently
+5. **Opt-out available:** Use `--no-encrypt` to upload unencrypted files
 
 ## Relay Discovery
 
@@ -185,17 +200,20 @@ The `discover-relays` command:
 
 ## Security Considerations
 
+- **NIP-44 encryption:** File chunks are encrypted by default
+- **Self-encryption only:** Only the file owner can decrypt (private key required)
+- **Key verification:** Download verifies user's pubkey matches manifest before decryption
 - Private keys are never stored in manifests
 - Key files support tilde expansion for home directory
 - Config file can reference external key files
-- Chunk hashes verified on download
+- Chunk hashes verified on download (against original unencrypted data)
 - File hash verified after reassembly
 
 ## Dependencies
 
 | Crate | Purpose |
 |-------|---------|
-| nostr-sdk | Nostr protocol implementation |
+| nostr-sdk | Nostr protocol implementation (with nip44 feature) |
 | clap | CLI argument parsing |
 | tokio | Async runtime |
 | serde/serde_json | JSON serialization |
@@ -205,3 +223,4 @@ The `discover-relays` command:
 | indicatif | Progress bars |
 | reqwest | HTTP client for relay discovery |
 | dirs | Platform config directories |
+| chacha20 | NIP-44 encryption (via nostr-sdk) |

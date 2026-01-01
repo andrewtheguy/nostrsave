@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 /// Minimum chunk size (1 KB)
 const MIN_CHUNK_SIZE: usize = 1024;
-/// Maximum chunk size (1 MB)
-const MAX_CHUNK_SIZE: usize = 1_048_576;
+/// Maximum chunk size (65535 bytes - NIP-44 limit)
+const MAX_CHUNK_SIZE: usize = 65535;
 
 /// Parse and validate chunk size within allowed bounds
 fn parse_chunk_size(s: &str) -> Result<usize, String> {
@@ -55,8 +55,8 @@ pub enum Commands {
         #[arg(value_name = "FILE")]
         file: PathBuf,
 
-        /// Chunk size in bytes (1KB-1MB, default: 64KB)
-        #[arg(short, long, default_value = "65536", value_parser = parse_chunk_size)]
+        /// Chunk size in bytes (1KB-65535, default: 65535 - NIP-44 limit)
+        #[arg(short, long, default_value = "65535", value_parser = parse_chunk_size)]
         chunk_size: usize,
 
         /// Output manifest file path (defaults to <filename>.nostrsave)
@@ -112,8 +112,8 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         concurrent: usize,
 
-        /// Chunk size in bytes for round-trip test (default: 64KB)
-        #[arg(long, default_value = "65536", value_parser = parse_chunk_size)]
+        /// Chunk size in bytes for round-trip test (default: 65535)
+        #[arg(long, default_value = "65535", value_parser = parse_chunk_size)]
         chunk_size: usize,
     },
 

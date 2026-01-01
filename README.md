@@ -4,6 +4,7 @@ A CLI tool for storing and retrieving files on the Nostr network.
 
 ## Features
 
+- **NIP-44 encryption** enabled by default (self-encrypt to own public key)
 - **Upload files** to Nostr relays as chunked events
 - **Download files** using file hash or local manifest
 - **File index** automatically maintained on your public key
@@ -22,14 +23,17 @@ cargo install --path .
 # Generate a keypair
 nostrsave keygen
 
-# Upload a file
-nostrsave upload photo.jpg -k nsec1...
+# Upload a file (encrypted by default)
+nostrsave upload photo.jpg --key-file ~/.config/nostrsave/nostr.key
+
+# Upload without encryption
+nostrsave upload photo.jpg --key-file nostr.key --no-encrypt
 
 # List your indexed files
-nostrsave list -k nsec1...
+nostrsave list --key-file ~/.config/nostrsave/nostr.key
 
-# Download a file by hash
-nostrsave download --hash sha256:abc123...
+# Download a file by hash (decrypts automatically)
+nostrsave download --hash sha256:abc123... --key-file ~/.config/nostrsave/nostr.key
 ```
 
 ## Configuration
@@ -51,52 +55,56 @@ private_key = "nsec1..."
 # Option 2: Key file path (supports ~)
 key_file = "~/.config/nostrsave/nostr.key"
 
-[relays]
+[data_relays]
+# Relays for storing file chunks (need write access)
 urls = [
     "wss://relay.damus.io",
     "wss://nos.lol",
-    "wss://nostr.wine",
+]
+
+[index_relays]
+# Relays for manifest and file index (public discovery)
+urls = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
 ]
 ```
 
-### Priority Order
+### Configuration Priority
 
-1. CLI flags (`-k`, `--key-file`, `-r`)
+1. CLI flag (`--key-file`)
 2. TOML config (`config.toml`)
-3. Legacy file (`relays.txt`)
-4. Environment variable (`NOSTRSAVE_RELAYS`)
-5. Built-in fallback relays
+3. Built-in fallback relays (for index relays only)
 
 ## Commands
 
 ### upload
 
-Upload a file to Nostr relays.
+Upload a file to Nostr relays. Files are encrypted by default using NIP-44.
 
 ```bash
 nostrsave upload <FILE> [OPTIONS]
 
 Options:
-  -c, --chunk-size <BYTES>  Chunk size (1KB-1MB, default: 64KB)
+  -c, --chunk-size <BYTES>  Chunk size (1KB-65535, default: 65535)
   -o, --output <PATH>       Output manifest file path
-  -k <KEY>                  Private key (hex or nsec)
-  --key-file <PATH>         Path to key file
-  -r, --relay <URL>         Relay URLs (repeatable)
+  --no-encrypt              Disable NIP-44 encryption
   -v, --verbose             Verbose output
 ```
 
 ### download
 
-Download a file from Nostr relays.
+Download a file from Nostr relays. Encrypted files are automatically decrypted.
 
 ```bash
 nostrsave download <MANIFEST> [OPTIONS]
 nostrsave download --hash <HASH> [OPTIONS]
 
 Options:
-  --hash <HASH>      File hash to fetch from relays
+  --hash <HASH>        File hash to fetch from relays
   -o, --output <PATH>  Output file path
-  --stats            Show relay statistics
+  --stats              Show relay statistics
+  -v, --verbose        Verbose output
 ```
 
 ### list
@@ -107,7 +115,8 @@ List files in your Nostr file index.
 nostrsave list [OPTIONS]
 
 Options:
-  --pubkey <NPUB>    List files for another user
+  -p, --pubkey <NPUB>  List files for another user (read-only)
+  -v, --verbose        Verbose output
 ```
 
 ### discover-relays
@@ -153,7 +162,9 @@ nostrsave best-relays -c 10
 
 ## How It Works
 
-Files are split into chunks (default 64KB), each published as a Nostr event. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
+Files are split into chunks (default 65535 bytes, NIP-44 max), encrypted with NIP-44 (self-encryption), and published as Nostr events. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
+
+**Encryption:** By default, chunks are encrypted using NIP-44 with your own public key. Only you can decrypt them with your private key. Use `--no-encrypt` to upload unencrypted files.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 
