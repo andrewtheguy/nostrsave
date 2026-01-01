@@ -11,6 +11,10 @@ A CLI tool for storing and retrieving files on the Nostr network.
 - **Relay discovery** with round-trip testing
 - **TOML configuration** with key file support
 
+## Disclaimer
+
+**Long-term storage is not guaranteed.** File persistence depends entirely on the Nostr relays you use. Relays may delete data at any time, go offline, or impose storage limits. Always keep local backups of important files. This tool is best suited for short term file sharing or as a temporary storage solution, not as a primary storage solution or for backup purposes.
+
 ## Installation
 
 Quick install (Linux/macOS):
