@@ -127,6 +127,9 @@ pub fn create_chunk_filter_for_indices(
     indices: &[usize],
     pubkey: Option<&PublicKey>,
 ) -> anyhow::Result<Vec<Filter>> {
+    if file_hash.trim().is_empty() {
+        return Err(anyhow::anyhow!("file_hash cannot be empty"));
+    }
     if indices.is_empty() {
         return Err(anyhow::anyhow!("indices cannot be empty"));
     }

@@ -252,8 +252,9 @@ pub async fn execute(
             break;
         }
 
-        // Use targeted filters only when below the threshold fraction of chunks are missing
-        // (avoids very large filters when relay failed or has few chunks)
+        // Use targeted filters when few chunks remain missing (efficient, small filter).
+        // Use full filter when many chunks are missing (e.g., after relay failure) to avoid
+        // creating extremely large targeted filters with hundreds of identifiers.
         let use_targeted = missing_indices.len() * TARGETED_FILTER_THRESHOLD_DIVISOR < manifest.total_chunks;
         let filters: Vec<Filter> = if use_targeted {
             create_chunk_filter_for_indices(
