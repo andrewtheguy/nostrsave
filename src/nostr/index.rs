@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// Identifier for the file index replaceable event
 pub const FILE_INDEX_IDENTIFIER: &str = "nostrsave-index";
 
+/// Current file index version
+pub const CURRENT_FILE_INDEX_VERSION: u8 = 1;
+
 /// A single entry in the file index
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileIndexEntry {
@@ -26,7 +29,7 @@ impl FileIndex {
     /// Create a new empty file index
     pub fn new() -> Self {
         Self {
-            version: 1,
+            version: CURRENT_FILE_INDEX_VERSION,
             entries: Vec::new(),
         }
     }
@@ -43,11 +46,13 @@ impl FileIndex {
     }
 
     /// Get number of files in the index
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if index is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -90,6 +95,15 @@ pub fn parse_file_index_event(event: &Event) -> anyhow::Result<FileIndex> {
     }
 
     let index: FileIndex = serde_json::from_str(&event.content)?;
+
+    if index.version != CURRENT_FILE_INDEX_VERSION {
+        return Err(anyhow::anyhow!(
+            "Unsupported file index version: expected {}, got {}",
+            CURRENT_FILE_INDEX_VERSION,
+            index.version
+        ));
+    }
+
     Ok(index)
 }
 
@@ -100,7 +114,7 @@ mod tests {
     #[test]
     fn test_file_index_new() {
         let index = FileIndex::new();
-        assert_eq!(index.version, 1);
+        assert_eq!(index.version, CURRENT_FILE_INDEX_VERSION);
         assert!(index.is_empty());
     }
 
