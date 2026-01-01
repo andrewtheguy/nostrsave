@@ -148,7 +148,7 @@ pub async fn execute(
                 if verbose {
                     println!("  Chunk {} -> {}", chunk.index, event_id);
                 }
-                manifest.add_chunk(chunk.index, event_id, chunk.hash.clone());
+                manifest.add_chunk(chunk.index, event_id, chunk.hash.clone())?;
             }
             Err(e) => {
                 pb.finish_and_clear();
