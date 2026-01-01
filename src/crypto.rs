@@ -57,4 +57,38 @@ mod tests {
         // NIP-44 uses random nonces, so encryptions should differ
         assert_ne!(encrypted1, encrypted2);
     }
+
+    #[test]
+    fn test_nip44_max_size() {
+        let keys = Keys::generate();
+
+        // Binary search to find exact limit
+        let mut low = 65000;
+        let mut high = 65535;
+        let mut max_working = low;
+
+        while low <= high {
+            let mid = (low + high) / 2;
+            let data: Vec<u8> = (0..mid).map(|i| (i % 256) as u8).collect();
+            if encrypt_chunk(&keys, &data).is_ok() {
+                max_working = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        println!("Maximum working NIP-44 plaintext size: {}", max_working);
+
+        // Verify max_working works
+        let data: Vec<u8> = (0..max_working).map(|i| (i % 256) as u8).collect();
+        let encrypted = encrypt_chunk(&keys, &data).unwrap();
+        println!("Encrypted len at max size: {}", encrypted.len());
+        let decrypted = decrypt_chunk(&keys, &encrypted).unwrap();
+        assert_eq!(data, decrypted);
+
+        // Verify max_working + 1 fails
+        let data: Vec<u8> = (0..=max_working).map(|i| (i % 256) as u8).collect();
+        assert!(encrypt_chunk(&keys, &data).is_err());
+    }
 }

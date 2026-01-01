@@ -107,7 +107,7 @@ Tags:
   "file_name": "photo.jpg",
   "file_hash": "sha256:abc123...",
   "file_size": 1234567,
-  "chunk_size": 65535,
+  "chunk_size": 65408,
   "total_chunks": 19,
   "created_at": 1704067200,
   "pubkey": "npub1...",
@@ -166,8 +166,8 @@ Tags:
 
 ## Chunking Strategy
 
-- **Default chunk size:** 65535 bytes (NIP-44 maximum)
-- **Range:** 1 KB to 65535 bytes
+- **Default chunk size:** 65408 bytes (NIP-44 maximum)
+- **Range:** 1 KB to 65408 bytes
 - **Hash algorithm:** SHA-256 (computed on original, unencrypted data)
 - **Encoding:** NIP-44 encrypted (default) or base64
 

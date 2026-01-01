@@ -86,7 +86,7 @@ Upload a file to Nostr relays. Files are encrypted by default using NIP-44.
 nostrsave upload <FILE> [OPTIONS]
 
 Options:
-  -c, --chunk-size <BYTES>  Chunk size (1KB-65535, default: 65535)
+  -c, --chunk-size <BYTES>  Chunk size (1KB-65408, default: 65408)
   -o, --output <PATH>       Output manifest file path
   --no-encrypt              Disable NIP-44 encryption
   -v, --verbose             Verbose output
@@ -162,7 +162,7 @@ nostrsave best-relays -c 10
 
 ## How It Works
 
-Files are split into chunks (default 65535 bytes, NIP-44 max), encrypted with NIP-44 (self-encryption), and published as Nostr events. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
+Files are split into chunks (default 65408 bytes, NIP-44 max), encrypted with NIP-44 (self-encryption), and published as Nostr events. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
 
 **Encryption:** By default, chunks are encrypted using NIP-44 with your own public key. Only you can decrypt them with your private key. Use `--no-encrypt` to upload unencrypted files.
 
