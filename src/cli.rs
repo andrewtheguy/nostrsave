@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Minimum chunk size (1 KB)
 const MIN_CHUNK_SIZE: usize = 1024;
-/// Maximum chunk size (65408 bytes - Practical application limit, NIP-44 protocol max is 65535)
+/// Maximum chunk size (65408 bytes - tested limit for reliable relay storage; NIP-44 allows up to 65535)
 const MAX_CHUNK_SIZE: usize = 65408;
 
 /// Parse encryption algorithm from string
@@ -61,7 +61,7 @@ pub enum Commands {
         #[arg(value_name = "FILE")]
         file: PathBuf,
 
-        /// Chunk size in bytes (1KB-65408, default: 32KB)
+        /// Chunk size in bytes (1KB-65408 tested max, default: 32KB)
         #[arg(short, long, default_value = "32768", value_parser = parse_chunk_size)]
         chunk_size: usize,
 

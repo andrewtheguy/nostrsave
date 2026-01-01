@@ -90,7 +90,7 @@ Upload a file to Nostr relays. Files are encrypted by default using NIP-44.
 nostrsave upload <FILE> [OPTIONS]
 
 Options:
-  -c, --chunk-size <BYTES>       Chunk size (1KB-65408, default: 32KB)
+  -c, --chunk-size <BYTES>       Chunk size (1KB-65408 tested max, default: 32KB)
   -o, --output <PATH>            Output manifest file path
   -e, --encryption <ALGORITHM>   Encryption: nip44 (default) or none
   -v, --verbose                  Verbose output

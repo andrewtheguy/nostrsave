@@ -169,15 +169,15 @@ Tags:
 ## Chunking Strategy
 
 - **Default chunk size:** 32 KB (32768 bytes)
-- **Maximum:** 65408 bytes (Practical application limit)
-- **Range:** 1 KB to 65408 bytes
+- **Maximum:** 65408 bytes (tested limit for reliable relay storage)
+- **Range:** 1 KB to 65408 bytes (tested max)
 - **Hash algorithm:** SHA-256 (computed on original, unencrypted data)
 - **Encoding:** NIP-44 encrypted (default) or base64
 
 ### Why Chunking?
 
 1. **Relay limits:** Most relays have event size limits
-2. **NIP-44 limits:** Protocol maximum plaintext size is 65535 bytes, but we use 65408 bytes as a safe limit
+2. **NIP-44 limits:** Protocol allows up to 65535 bytes, but 65408 is the tested limit that works reliably with relays
 3. **Parallel fetching:** Chunks can be fetched concurrently
 4. **Resumability:** Failed uploads/downloads can resume
 5. **Deduplication:** Identical chunks share the same hash
