@@ -28,6 +28,12 @@ pub async fn execute(
     let data_relays = get_data_relays()?;
     let index_relays = get_index_relays();
 
+    if index_relays.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No index relays configured. Add [index_relays] to config or check relay URLs."
+        ));
+    }
+
     // 2. Verify file exists
     if !file.exists() {
         return Err(anyhow::anyhow!("File not found: {}", file.display()));
@@ -59,7 +65,7 @@ pub async fn execute(
 
     println!("File: {} ({} bytes)", file_name, file_size);
 
-    // 3. Split file into chunks
+    // 4. Split file into chunks
     println!("Splitting file into chunks...");
     let chunker = FileChunker::new(chunk_size)?;
     let (file_hash, chunks) = chunker.split_file(&file)?;
