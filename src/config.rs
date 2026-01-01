@@ -16,8 +16,6 @@ pub struct Config {
 /// Identity configuration (private key)
 #[derive(Debug, Deserialize)]
 pub struct IdentityConfig {
-    /// Inline private key (hex or nsec)
-    pub private_key: Option<String>,
     /// Path to file containing private key (supports ~ expansion)
     pub key_file: Option<String>,
 }
@@ -124,44 +122,42 @@ pub fn require_config() -> anyhow::Result<Config> {
 // Identity Resolution
 // ============================================================================
 
-/// Get private key from config
-/// Returns error if config missing or identity not configured
-pub fn get_private_key() -> anyhow::Result<String> {
+/// Read private key from a key file path
+fn read_key_file(key_path: &str) -> anyhow::Result<String> {
+    let path = expand_tilde(key_path);
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        anyhow::anyhow!("Failed to read key file '{}': {}", path.display(), e)
+    })?;
+    let key = content.trim().to_string();
+    if key.is_empty() {
+        return Err(anyhow::anyhow!("Key file is empty: {}", path.display()));
+    }
+    Ok(key)
+}
+
+/// Get private key from CLI override or config
+/// Returns error if no key file specified
+pub fn get_private_key(key_file_override: Option<&str>) -> anyhow::Result<String> {
+    // CLI override takes precedence
+    if let Some(key_path) = key_file_override {
+        return read_key_file(key_path);
+    }
+
+    // Fall back to config
     let config = require_config()?;
 
     let identity = config.identity.ok_or_else(|| {
         anyhow::anyhow!("Missing [identity] section in config")
     })?;
 
-    // Check for conflicting options
-    if identity.private_key.is_some() && identity.key_file.is_some() {
-        return Err(anyhow::anyhow!(
-            "Config error: cannot specify both 'private_key' and 'key_file' in [identity]"
-        ));
-    }
+    let key_path = identity.key_file.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Missing 'key_file' in [identity] section.\n\
+             Set key_file in config or use --key-file flag."
+        )
+    })?;
 
-    // Inline key
-    if let Some(key) = identity.private_key {
-        return Ok(key);
-    }
-
-    // Key file with tilde expansion
-    if let Some(key_path) = identity.key_file {
-        let path = expand_tilde(&key_path);
-        let content = std::fs::read_to_string(&path).map_err(|e| {
-            anyhow::anyhow!("Failed to read key file '{}': {}", path.display(), e)
-        })?;
-        let key = content.trim().to_string();
-        if key.is_empty() {
-            return Err(anyhow::anyhow!("Key file is empty: {}", path.display()));
-        }
-        return Ok(key);
-    }
-
-    Err(anyhow::anyhow!(
-        "Missing private key in [identity] section.\n\
-         Set either 'private_key' or 'key_file'."
-    ))
+    read_key_file(&key_path)
 }
 
 // ============================================================================

@@ -14,10 +14,11 @@ pub async fn execute(
     file: PathBuf,
     chunk_size: usize,
     output: Option<PathBuf>,
+    key_file: Option<&str>,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load config - private key and relays
-    let private_key = get_private_key()?;
+    let private_key = get_private_key(key_file)?;
     let keys = Keys::parse(&private_key)?;
 
     let data_relays = get_data_relays()?;

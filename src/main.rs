@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
             chunk_size,
             output,
         } => {
-            commands::upload::execute(file, chunk_size, output, cli.verbose).await?;
+            commands::upload::execute(file, chunk_size, output, cli.key_file.as_deref(), cli.verbose).await?;
         }
         Commands::Download {
             manifest,
@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
             println!("Add to config.toml [identity] section.");
         }
         Commands::Pubkey => {
-            let private_key = config::get_private_key()?;
+            let private_key = config::get_private_key(cli.key_file.as_deref())?;
             let keys = nostr_sdk::Keys::parse(&private_key)?;
             println!("{}", keys.public_key().to_bech32()?);
         }
@@ -63,8 +63,8 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
-        Commands::List { pubkey } => {
-            commands::list::execute(pubkey, cli.verbose).await?;
+        Commands::List => {
+            commands::list::execute(cli.pubkey.as_deref(), cli.key_file.as_deref(), cli.verbose).await?;
         }
         Commands::BestRelays { input, count } => {
             commands::best_relays::execute(input, count)?;

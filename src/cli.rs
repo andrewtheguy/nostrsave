@@ -37,6 +37,14 @@ pub struct Cli {
     /// Verbose output
     #[arg(short, long, global = true)]
     pub verbose: bool,
+
+    /// Path to key file (overrides config)
+    #[arg(short, long, global = true)]
+    pub key_file: Option<String>,
+
+    /// Public key (npub or hex) for read-only operations
+    #[arg(short, long, global = true)]
+    pub pubkey: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -106,11 +114,7 @@ pub enum Commands {
     },
 
     /// List files in your Nostr file index
-    List {
-        /// Public key to list files for (defaults to your key)
-        #[arg(long)]
-        pubkey: Option<String>,
-    },
+    List,
 
     /// Print best relays from discovery results in TOML format
     BestRelays {

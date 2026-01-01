@@ -2,10 +2,7 @@
 # Copy to ~/.config/nostrsave/config.toml
 
 [identity]
-# Option 1: Inline private key (hex or nsec format)
-# private_key = "nsec1..."
-
-# Option 2: Path to file containing private key (supports ~ expansion)
+# Path to file containing private key (supports ~ expansion)
 key_file = "~/.config/nostrsave/nostr.key"
 
 [data_relays]
