@@ -86,8 +86,9 @@ async fn main() -> anyhow::Result<()> {
             configured_only,
             timeout,
             concurrent,
+            chunk_size,
         } => {
-            commands::discover_relays::execute(output, configured_only, timeout, concurrent, cli.verbose)
+            commands::discover_relays::execute(output, configured_only, timeout, concurrent, chunk_size, cli.verbose)
                 .await?;
         }
     }

@@ -102,11 +102,15 @@ pub enum Commands {
         configured_only: bool,
 
         /// Connection timeout in seconds
-        #[arg(long, default_value = "5")]
+        #[arg(long, default_value = "10")]
         timeout: u64,
 
         /// Maximum concurrent relay tests
         #[arg(long, default_value = "20")]
         concurrent: usize,
+
+        /// Chunk size in bytes for round-trip test (default: 64KB)
+        #[arg(long, default_value = "65536", value_parser = parse_chunk_size)]
+        chunk_size: usize,
     },
 }

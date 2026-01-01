@@ -1,7 +1,12 @@
+use base64::prelude::*;
 use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
+
+/// Kind for test chunk events (same as file chunks)
+const TEST_CHUNK_KIND: u16 = 30089;
 
 /// Result of testing a single relay
 #[derive(Debug, Clone, Serialize)]
@@ -9,15 +14,18 @@ pub struct RelayTestResult {
     pub url: String,
     pub connected: bool,
     pub latency_ms: Option<u64>,
-    pub can_fetch: bool,
+    pub can_write: bool,
+    pub can_read: bool,
+    pub round_trip_ms: Option<u64>,
+    pub payload_size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 impl RelayTestResult {
-    /// Check if the relay is considered working
+    /// Check if the relay is considered working for file storage
     pub fn is_working(&self) -> bool {
-        self.connected && self.can_fetch
+        self.connected && self.can_write && self.can_read
     }
 }
 
@@ -43,22 +51,30 @@ pub async fn discover_relays_from_nostr_watch() -> anyhow::Result<Vec<String>> {
     Ok(relays)
 }
 
-/// Test a single relay for connectivity and functionality
-pub async fn test_relay(url: &str, timeout: Duration) -> RelayTestResult {
+/// Test a single relay for connectivity and round-trip with chunk-sized payload
+pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> RelayTestResult {
     let start = Instant::now();
 
     // Create a temporary keypair for testing
     let keys = Keys::generate();
-    let client = Client::new(keys);
+    let client = Client::new(keys.clone());
+
+    let base_result = RelayTestResult {
+        url: url.to_string(),
+        connected: false,
+        latency_ms: None,
+        can_write: false,
+        can_read: false,
+        round_trip_ms: None,
+        payload_size: chunk_size,
+        error: None,
+    };
 
     // Try to add the relay
     if let Err(e) = client.add_relay(url).await {
         return RelayTestResult {
-            url: url.to_string(),
-            connected: false,
-            latency_ms: None,
-            can_fetch: false,
             error: Some(format!("Failed to add relay: {}", e)),
+            ..base_result
         };
     }
 
@@ -82,31 +98,87 @@ pub async fn test_relay(url: &str, timeout: Duration) -> RelayTestResult {
     if !connected {
         client.disconnect().await;
         return RelayTestResult {
-            url: url.to_string(),
-            connected: false,
             latency_ms: Some(start.elapsed().as_millis() as u64),
-            can_fetch: false,
             error: Some("Connection timeout".to_string()),
+            ..base_result
         };
     }
 
     let connect_latency = start.elapsed().as_millis() as u64;
 
-    // Test fetch capability - try to fetch recent events
-    let filter = Filter::new()
-        .kind(Kind::TextNote)
-        .limit(1);
+    // Generate test payload with random data
+    let test_id = format!("test-{}", rand_hex(16));
+    let test_data: Vec<u8> = (0..chunk_size).map(|i| (i % 256) as u8).collect();
+    let test_data_b64 = BASE64_STANDARD.encode(&test_data);
+    let test_hash = format!("sha256:{}", hex::encode(Sha256::digest(&test_data)));
 
-    let can_fetch = match tokio::time::timeout(
-        timeout,
-        client.fetch_events(filter, timeout),
-    )
+    // Create a test chunk event
+    let tags = vec![
+        Tag::custom(TagKind::Custom("d".into()), vec![test_id.clone()]),
+        Tag::custom(TagKind::Custom("x".into()), vec![test_hash.clone()]),
+        Tag::custom(TagKind::Custom("chunk".into()), vec!["0".to_string()]),
+    ];
+
+    let round_trip_start = Instant::now();
+
+    // Publish test event
+    let can_write = match tokio::time::timeout(timeout, async {
+        let builder = EventBuilder::new(Kind::Custom(TEST_CHUNK_KIND), &test_data_b64).tags(tags);
+        client.send_event_builder(builder).await
+    })
     .await
     {
         Ok(Ok(_)) => true,
-        Ok(Err(_)) => false,
-        Err(_) => false, // Timeout
+        Ok(Err(e)) => {
+            client.disconnect().await;
+            return RelayTestResult {
+                connected: true,
+                latency_ms: Some(connect_latency),
+                payload_size: chunk_size,
+                error: Some(format!("Write failed: {}", e)),
+                ..base_result
+            };
+        }
+        Err(_) => {
+            client.disconnect().await;
+            return RelayTestResult {
+                connected: true,
+                latency_ms: Some(connect_latency),
+                payload_size: chunk_size,
+                error: Some("Write timeout".to_string()),
+                ..base_result
+            };
+        }
     };
+
+    // Small delay to allow relay to process
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Fetch the test event back
+    let filter = Filter::new()
+        .kind(Kind::Custom(TEST_CHUNK_KIND))
+        .author(keys.public_key())
+        .identifier(test_id.clone())
+        .limit(1);
+
+    let (can_read, error) = match tokio::time::timeout(timeout, client.fetch_events(filter, timeout)).await {
+        Ok(Ok(events)) => {
+            if let Some(event) = events.iter().next() {
+                // Verify the content matches
+                if event.content == test_data_b64 {
+                    (true, None)
+                } else {
+                    (false, Some("Content mismatch on read".to_string()))
+                }
+            } else {
+                (false, Some("Event not found on read".to_string()))
+            }
+        }
+        Ok(Err(e)) => (false, Some(format!("Read failed: {}", e))),
+        Err(_) => (false, Some("Read timeout".to_string())),
+    };
+
+    let round_trip_ms = round_trip_start.elapsed().as_millis() as u64;
 
     client.disconnect().await;
 
@@ -114,20 +186,31 @@ pub async fn test_relay(url: &str, timeout: Duration) -> RelayTestResult {
         url: url.to_string(),
         connected: true,
         latency_ms: Some(connect_latency),
-        can_fetch,
-        error: if can_fetch {
-            None
-        } else {
-            Some("Fetch test failed".to_string())
-        },
+        can_write,
+        can_read,
+        round_trip_ms: Some(round_trip_ms),
+        payload_size: chunk_size,
+        error,
     }
 }
 
-/// Test multiple relays concurrently
+/// Generate random hex string
+fn rand_hex(len: usize) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let hash = Sha256::digest(seed.to_le_bytes());
+    hex::encode(&hash[..len.min(32)])
+}
+
+/// Test multiple relays concurrently with chunk-sized payload
 pub async fn test_relays_concurrent(
     urls: Vec<String>,
     concurrency: usize,
     timeout: Duration,
+    chunk_size: usize,
     progress_callback: Option<Box<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Vec<RelayTestResult> {
     let total = urls.len();
@@ -139,7 +222,7 @@ pub async fn test_relays_concurrent(
             let completed = completed.clone();
             let callback = callback.clone();
             async move {
-                let result = test_relay(&url, timeout).await;
+                let result = test_relay(&url, timeout, chunk_size).await;
 
                 let done = completed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 if let Some(ref cb) = callback {
@@ -166,7 +249,10 @@ mod tests {
             url: "wss://test.relay".to_string(),
             connected: true,
             latency_ms: Some(100),
-            can_fetch: true,
+            can_write: true,
+            can_read: true,
+            round_trip_ms: Some(500),
+            payload_size: 65536,
             error: None,
         };
         assert!(working.is_working());
@@ -175,18 +261,24 @@ mod tests {
             url: "wss://test.relay".to_string(),
             connected: false,
             latency_ms: None,
-            can_fetch: false,
+            can_write: false,
+            can_read: false,
+            round_trip_ms: None,
+            payload_size: 65536,
             error: Some("timeout".to_string()),
         };
         assert!(!not_connected.is_working());
 
-        let no_fetch = RelayTestResult {
+        let no_read = RelayTestResult {
             url: "wss://test.relay".to_string(),
             connected: true,
             latency_ms: Some(100),
-            can_fetch: false,
-            error: Some("fetch failed".to_string()),
+            can_write: true,
+            can_read: false,
+            round_trip_ms: Some(500),
+            payload_size: 65536,
+            error: Some("read failed".to_string()),
         };
-        assert!(!no_fetch.is_working());
+        assert!(!no_read.is_working());
     }
 }

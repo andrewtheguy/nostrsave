@@ -31,6 +31,7 @@ struct DiscoverySettings {
     timeout_secs: u64,
     concurrent_tests: usize,
     configured_only: bool,
+    chunk_size: usize,
 }
 
 #[derive(Serialize)]
@@ -46,9 +47,11 @@ pub async fn execute(
     configured_only: bool,
     timeout_secs: u64,
     concurrent: usize,
+    chunk_size: usize,
     verbose: bool,
 ) -> anyhow::Result<()> {
     println!("Discovering relays...");
+    println!("  Test payload size: {} bytes", chunk_size);
 
     let mut all_relays: HashSet<String> = HashSet::new();
     let mut sources: Vec<String> = Vec::new();
@@ -93,9 +96,9 @@ pub async fn execute(
         pb_clone.set_position(done as u64);
     });
 
-    // 4. Test relays concurrently
+    // 4. Test relays concurrently with round-trip payload test
     let timeout = Duration::from_secs(timeout_secs);
-    let results = test_relays_concurrent(relay_list, concurrent, timeout, Some(progress_callback)).await;
+    let results = test_relays_concurrent(relay_list, concurrent, timeout, chunk_size, Some(progress_callback)).await;
 
     pb.finish_and_clear();
 
@@ -103,16 +106,17 @@ pub async fn execute(
     let mut working: Vec<RelayTestResult> = results.iter().filter(|r| r.is_working()).cloned().collect();
     let mut failed: Vec<RelayTestResult> = results.iter().filter(|r| !r.is_working()).cloned().collect();
 
-    // Sort working relays by latency
-    working.sort_by_key(|r| r.latency_ms.unwrap_or(u64::MAX));
+    // Sort working relays by round-trip time
+    working.sort_by_key(|r| r.round_trip_ms.unwrap_or(u64::MAX));
     // Sort failed relays alphabetically
     failed.sort_by(|a, b| a.url.cmp(&b.url));
 
     // 6. Print results
     println!("Results:");
     for result in &working {
-        let latency = result.latency_ms.map(|ms| format!("{}ms", ms)).unwrap_or_else(|| "?".to_string());
-        println!("  \x1b[32m✓\x1b[0m {:<45} - {}", result.url, latency);
+        let connect = result.latency_ms.map(|ms| format!("{}ms", ms)).unwrap_or_else(|| "?".to_string());
+        let roundtrip = result.round_trip_ms.map(|ms| format!("{}ms", ms)).unwrap_or_else(|| "?".to_string());
+        println!("  \x1b[32m✓\x1b[0m {:<45} connect: {:>6}, round-trip: {:>6}", result.url, connect, roundtrip);
     }
 
     if verbose {
@@ -140,6 +144,7 @@ pub async fn execute(
                 timeout_secs,
                 concurrent_tests: concurrent,
                 configured_only,
+                chunk_size,
             },
             summary: DiscoverySummary {
                 total_tested: results.len(),
