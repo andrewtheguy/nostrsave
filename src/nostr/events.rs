@@ -76,11 +76,12 @@ pub fn parse_chunk_event(event: &Event) -> anyhow::Result<ChunkEventData> {
     }
 
     let index: usize = tag_vec[1].parse()?;
+    let total_chunks: usize = tag_vec[2].parse()?;
 
     // Decode base64 content
     let data = base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?;
 
-    Ok(ChunkEventData { index, data })
+    Ok(ChunkEventData { index, total_chunks, data })
 }
 
 /// Create a Nostr event for a file manifest
