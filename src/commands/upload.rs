@@ -155,33 +155,30 @@ pub async fn execute(
     pb.finish_with_message("Upload complete!");
 
     // 7. Publish manifest to data relays
-    println!("\nPublishing manifest...");
+    println!("\nPublishing manifest to data relays...");
     let manifest_event = create_manifest_event(&manifest)?;
-    let manifest_event_id = match client.send_event_builder(manifest_event).await {
-        Ok(output) => output.val.to_bech32()?,
+    match client.send_event_builder(manifest_event.clone()).await {
+        Ok(_) => {}
         Err(e) => {
             return Err(anyhow::anyhow!("Failed to publish manifest: {}", e));
         }
     };
 
-    // 8. Update file index on index relays
-    println!("Updating file index...");
-    let index_updated = update_file_index(
+    client.disconnect().await;
+
+    // 8. Publish manifest and update file index on index relays
+    println!("Publishing to index relays...");
+    let manifest_event_id = publish_to_index_relays(
         &keys,
         &index_relays,
+        manifest_event,
         &file_hash,
         &file_name,
         file_size,
         manifest.created_at,
         verbose,
     )
-    .await;
-
-    if !index_updated {
-        eprintln!("  Warning: Failed to update file index (upload still succeeded)");
-    }
-
-    client.disconnect().await;
+    .await?;
 
     // 9. Save manifest locally as backup
     let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
@@ -201,17 +198,18 @@ pub async fn execute(
     Ok(())
 }
 
-/// Update the file index with a new entry
-async fn update_file_index(
+/// Publish manifest and update file index on index relays
+#[allow(clippy::too_many_arguments)]
+async fn publish_to_index_relays(
     keys: &Keys,
     index_relays: &[String],
+    manifest_event: EventBuilder,
     file_hash: &str,
     file_name: &str,
     file_size: u64,
     uploaded_at: u64,
     verbose: bool,
-) -> bool {
-    // Create a new client for index relays
+) -> anyhow::Result<String> {
     let client = Client::new(keys.clone());
 
     for relay in index_relays {
@@ -225,7 +223,16 @@ async fn update_file_index(
     client.connect().await;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // 1. Try to fetch existing file index
+    // 1. Publish manifest to index relays
+    let manifest_event_id = match client.send_event_builder(manifest_event).await {
+        Ok(output) => output.val.to_bech32()?,
+        Err(e) => {
+            client.disconnect().await;
+            return Err(anyhow::anyhow!("Failed to publish manifest to index relays: {}", e));
+        }
+    };
+
+    // 2. Fetch existing file index
     let filter = create_file_index_filter(&keys.public_key());
     let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
         Ok(events) => {
@@ -259,7 +266,7 @@ async fn update_file_index(
         }
     };
 
-    // 2. Add new entry
+    // 3. Add new entry
     let entry = FileIndexEntry {
         file_hash: file_hash.to_string(),
         file_name: file_name.to_string(),
@@ -268,33 +275,22 @@ async fn update_file_index(
     };
     index.add_entry(entry);
 
-    // 3. Publish updated index
-    let event_builder = match create_file_index_event(&index) {
-        Ok(builder) => builder,
-        Err(e) => {
-            if verbose {
-                eprintln!("  Failed to create index event: {}", e);
+    // 4. Publish updated index
+    if let Ok(event_builder) = create_file_index_event(&index) {
+        match client.send_event_builder(event_builder).await {
+            Ok(_) => {
+                if verbose {
+                    println!("  Index updated with {} files", index.len());
+                }
             }
-            client.disconnect().await;
-            return false;
-        }
-    };
-
-    let result = match client.send_event_builder(event_builder).await {
-        Ok(_) => {
-            if verbose {
-                println!("  Index updated with {} files", index.len());
+            Err(e) => {
+                if verbose {
+                    eprintln!("  Failed to publish index: {}", e);
+                }
             }
-            true
         }
-        Err(e) => {
-            if verbose {
-                eprintln!("  Failed to publish index: {}", e);
-            }
-            false
-        }
-    };
+    }
 
     client.disconnect().await;
-    result
+    Ok(manifest_event_id)
 }
