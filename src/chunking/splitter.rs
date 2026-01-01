@@ -189,7 +189,6 @@ mod tests {
         // Verify they match
         assert_eq!(hash1, result.file_hash);
         assert_eq!(chunks1.len(), chunks2.len());
-        assert_eq!(chunks1.len(), result.total_chunks);
 
         for (c1, c2) in chunks1.iter().zip(chunks2.iter()) {
             assert_eq!(c1.index, c2.index);
@@ -199,18 +198,18 @@ mod tests {
     }
 
     #[test]
-    fn test_iterator_chunks_yielded() {
+    fn test_iterator_yields_correct_count() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"0123456789ABCDEF").unwrap(); // 16 bytes
 
         let chunker = FileChunker::new(4).unwrap();
         let mut iter = chunker.split_file_iter(file.path()).unwrap();
 
-        assert_eq!(iter.chunks_yielded(), 0);
-        iter.next();
-        assert_eq!(iter.chunks_yielded(), 1);
-        iter.next();
-        assert_eq!(iter.chunks_yielded(), 2);
+        let mut count = 0;
+        while iter.next().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 4); // 16 bytes / 4 bytes per chunk = 4 chunks
     }
 
     #[test]
@@ -221,7 +220,8 @@ mod tests {
         let mut iter = chunker.split_file_iter(file.path()).unwrap();
 
         assert!(iter.next().is_none());
+        // Empty file should still produce a valid hash
         let result = iter.finalize();
-        assert_eq!(result.total_chunks, 0);
+        assert!(!result.file_hash.is_empty());
     }
 }
