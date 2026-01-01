@@ -1,3 +1,4 @@
 /target
 *.nostrsave
 config.sample.toml
+relays.json
