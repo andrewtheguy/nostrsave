@@ -1,7 +1,8 @@
 use base64::Engine;
 use nostr_sdk::prelude::*;
 
-use crate::config::{CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
+use crate::config::{EncryptionAlgorithm, CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
+use crate::crypto;
 use crate::manifest::Manifest;
 
 /// Data extracted from a chunk event
@@ -20,10 +21,14 @@ pub struct ChunkMetadata<'a> {
     pub chunk_hash: &'a str,
     pub chunk_data: &'a [u8],
     pub filename: &'a str,
+    pub encryption: EncryptionAlgorithm,
 }
 
 /// Create a Nostr event for a file chunk
-pub fn create_chunk_event(metadata: &ChunkMetadata) -> anyhow::Result<EventBuilder> {
+///
+/// - content: pre-processed content (encrypted string or base64-encoded)
+/// - metadata: chunk metadata including encrypted flag
+pub fn create_chunk_event(metadata: &ChunkMetadata, content: &str) -> anyhow::Result<EventBuilder> {
     // Validate inputs
     if metadata.chunk_index >= metadata.total_chunks {
         return Err(anyhow::anyhow!(
@@ -41,11 +46,13 @@ pub fn create_chunk_event(metadata: &ChunkMetadata) -> anyhow::Result<EventBuild
     if metadata.chunk_hash.is_empty() {
         return Err(anyhow::anyhow!("chunk_hash cannot be empty"));
     }
+    if content.is_empty() {
+        return Err(anyhow::anyhow!("content cannot be empty"));
+    }
 
     let d_tag = format!("{}:{}", metadata.file_hash, metadata.chunk_index);
-    let encoded_data = base64::engine::general_purpose::STANDARD.encode(metadata.chunk_data);
 
-    Ok(EventBuilder::new(Kind::Custom(CHUNK_EVENT_KIND), encoded_data)
+    Ok(EventBuilder::new(Kind::Custom(CHUNK_EVENT_KIND), content)
         .tag(Tag::identifier(d_tag))
         .tag(Tag::custom(
             TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::X)),
@@ -66,6 +73,10 @@ pub fn create_chunk_event(metadata: &ChunkMetadata) -> anyhow::Result<EventBuild
         .tag(Tag::custom(
             TagKind::custom("size"),
             vec![metadata.chunk_data.len().to_string()],
+        ))
+        .tag(Tag::custom(
+            TagKind::custom("encryption"),
+            vec![metadata.encryption.to_string()],
         )))
 }
 
@@ -83,8 +94,10 @@ pub fn create_chunk_filter(file_hash: &str, pubkey: Option<&PublicKey>) -> Filte
 }
 
 /// Parse a chunk event to extract chunk data
-pub fn parse_chunk_event(event: &Event) -> anyhow::Result<ChunkEventData> {
-    // Find chunk tag to get index and total
+///
+/// If keys are provided and the chunk is encrypted, decrypts the content.
+pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<ChunkEventData> {
+    // Find chunk tag to get index
     let chunk_tag = event
         .tags
         .iter()
@@ -98,8 +111,35 @@ pub fn parse_chunk_event(event: &Event) -> anyhow::Result<ChunkEventData> {
 
     let index: usize = tag_vec[1].parse()?;
 
-    // Decode base64 content
-    let data = base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?;
+    // Check encryption algorithm - fail fast on missing or unknown values
+    let encryption_tag = event
+        .tags
+        .iter()
+        .find(|t| t.kind() == TagKind::custom("encryption"))
+        .ok_or_else(|| anyhow::anyhow!("Missing encryption tag in chunk event"))?;
+
+    let encryption_value = encryption_tag
+        .as_slice()
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("Encryption tag has no value"))?;
+
+    let encryption = encryption_value
+        .parse::<EncryptionAlgorithm>()
+        .map_err(|e| anyhow::anyhow!("Unsupported encryption algorithm '{}': {}", encryption_value, e))?;
+
+    let data = match encryption {
+        EncryptionAlgorithm::Nip44 => {
+            // Need keys to decrypt
+            let keys = keys.ok_or_else(|| {
+                anyhow::anyhow!("Chunk is encrypted but no keys provided for decryption")
+            })?;
+            crypto::decrypt_chunk(keys, &event.content)?
+        }
+        EncryptionAlgorithm::None => {
+            // Plain base64 decode
+            base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?
+        }
+    };
 
     Ok(ChunkEventData { index, data })
 }

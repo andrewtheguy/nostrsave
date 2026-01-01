@@ -1,2 +1,4 @@
 /target
 *.nostrsave
+/target
+relays.json

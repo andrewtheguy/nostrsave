@@ -1,12 +1,13 @@
-use base64::prelude::*;
+use crate::crypto;
 use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
+use rand::Rng;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
 /// Kind for test chunk events (same as file chunks)
-const TEST_CHUNK_KIND: u16 = 30089;
+const TEST_CHUNK_KIND: u16 = 30078;
 
 /// Result of testing a single relay
 #[derive(Debug, Clone, Serialize)]
@@ -80,20 +81,15 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
 
     // Connect with timeout
     client.connect().await;
+    client.wait_for_connection(timeout).await;
 
-    // Wait for connection (with timeout)
-    let connect_start = Instant::now();
-    let mut connected = false;
-    while connect_start.elapsed() < timeout {
-        let relays = client.relays().await;
-        if let Some((_, relay)) = relays.into_iter().next() {
-            if relay.is_connected() {
-                connected = true;
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    // Check if connection was established
+    let connected = client
+        .relays()
+        .await
+        .into_iter()
+        .next()
+        .is_some_and(|(_, relay)| relay.is_connected());
 
     if !connected {
         client.disconnect().await;
@@ -108,22 +104,38 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
 
     // Generate test payload with random data
     let test_id = format!("test-{}", rand_hex(16));
-    let test_data: Vec<u8> = (0..chunk_size).map(|i| (i % 256) as u8).collect();
-    let test_data_b64 = BASE64_STANDARD.encode(&test_data);
+    let mut test_data = vec![0u8; chunk_size];
+    rand::thread_rng().fill(&mut test_data[..]);
     let test_hash = format!("sha256:{}", hex::encode(Sha256::digest(&test_data)));
 
-    // Create a test chunk event
+    // Encrypt test data using NIP-44 (same as actual upload)
+    let encrypted_content = match crypto::encrypt_chunk(&keys, &test_data) {
+        Ok(content) => content,
+        Err(e) => {
+            client.disconnect().await;
+            return RelayTestResult {
+                connected: true,
+                latency_ms: Some(connect_latency),
+                payload_size: chunk_size,
+                error: Some(format!("NIP-44 encryption failed: {}", e)),
+                ..base_result
+            };
+        }
+    };
+
+    // Create a test chunk event with encrypted content
     let tags = vec![
         Tag::custom(TagKind::Custom("d".into()), vec![test_id.clone()]),
         Tag::custom(TagKind::Custom("x".into()), vec![test_hash.clone()]),
         Tag::custom(TagKind::Custom("chunk".into()), vec!["0".to_string()]),
+        Tag::custom(TagKind::Custom("encrypted".into()), vec!["true".to_string()]),
     ];
 
     let round_trip_start = Instant::now();
 
-    // Publish test event
+    // Publish test event with NIP-44 encrypted payload
     let can_write = match tokio::time::timeout(timeout, async {
-        let builder = EventBuilder::new(Kind::Custom(TEST_CHUNK_KIND), &test_data_b64).tags(tags);
+        let builder = EventBuilder::new(Kind::Custom(TEST_CHUNK_KIND), &encrypted_content).tags(tags);
         client.send_event_builder(builder).await
     })
     .await
@@ -164,11 +176,16 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     let (can_read, error) = match client.fetch_events(filter, timeout).await {
         Ok(events) => {
             if let Some(event) = events.iter().next() {
-                // Verify the content matches
-                if event.content == test_data_b64 {
-                    (true, None)
-                } else {
-                    (false, Some("Content mismatch on read".to_string()))
+                // Decrypt and verify the content matches original data
+                match crypto::decrypt_chunk(&keys, &event.content) {
+                    Ok(decrypted) => {
+                        if decrypted == test_data {
+                            (true, None)
+                        } else {
+                            (false, Some("Content mismatch after decryption".to_string()))
+                        }
+                    }
+                    Err(e) => (false, Some(format!("Decryption failed: {}", e))),
                 }
             } else {
                 (false, Some("Event not found on read".to_string()))
@@ -248,7 +265,7 @@ mod tests {
             can_write: true,
             can_read: true,
             round_trip_ms: Some(500),
-            payload_size: 65536,
+            payload_size: 32768,
             error: None,
         };
         assert!(working.is_working());
@@ -260,7 +277,7 @@ mod tests {
             can_write: false,
             can_read: false,
             round_trip_ms: None,
-            payload_size: 65536,
+            payload_size: 32768,
             error: Some("timeout".to_string()),
         };
         assert!(!not_connected.is_working());
@@ -272,7 +289,7 @@ mod tests {
             can_write: true,
             can_read: false,
             round_trip_ms: Some(500),
-            payload_size: 65536,
+            payload_size: 32768,
             error: Some("read failed".to_string()),
         };
         assert!(!no_read.is_working());

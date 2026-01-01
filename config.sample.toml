@@ -1,0 +1,34 @@
+# nostrsave configuration
+# Copy to ~/.config/nostrsave/config.toml
+
+[identity]
+# Path to file containing private key (supports ~ expansion)
+key_file = "~/.config/nostrsave/nostr.key"
+
+[data_relays]
+# Relays for uploading file chunks (required for upload command)
+# These relays are stored in the manifest for download
+# Run `nostrsave best-relays` after `nostrsave discover-relays` to get optimal list
+urls = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://nostr.wine",
+    "wss://relay.primal.net",
+    "wss://relay.snort.social"
+]
+
+# [index_relays]
+# Optional: Relays for storing file index and manifests (used by list command)
+# If not specified, uses default relays:
+#   wss://relay.damus.io, wss://nos.lol, wss://nostr.wine,
+#   wss://relay.primal.net, wss://relay.snort.social
+# urls = [
+#     "wss://relay.damus.io",
+#     "wss://nos.lol"
+# ]
+
+# [encryption]
+# Optional: Default encryption algorithm for uploads
+# Values: "nip44" (default, recommended) or "none"
+# Can be overridden with --encryption flag
+# algorithm = "nip44"

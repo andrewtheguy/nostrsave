@@ -1,4 +1,4 @@
-use crate::config::get_default_relays;
+use crate::config::get_index_relays;
 use crate::relay::{discover_relays_from_nostr_watch, test_relays_concurrent, RelayTestResult};
 use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -70,11 +70,11 @@ pub async fn execute(
         }
     }
 
-    // 2. Add configured relays
-    let configured = get_default_relays();
-    println!("  Added {} configured relays", configured.len());
-    sources.push(format!("configured ({} relays)", configured.len()));
-    all_relays.extend(configured);
+    // 2. Add index relays (from config or defaults)
+    let index_relays = get_index_relays();
+    println!("  Added {} index relays", index_relays.len());
+    sources.push(format!("index relays ({} relays)", index_relays.len()));
+    all_relays.extend(index_relays);
 
     if all_relays.is_empty() {
         return Err(anyhow::anyhow!("No relays to test"));

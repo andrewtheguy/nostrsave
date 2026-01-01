@@ -109,7 +109,7 @@ impl FileChunker {
     ///
     /// # Example
     /// ```ignore
-    /// let chunker = FileChunker::new(65536)?;
+    /// let chunker = FileChunker::new(32768)?;
     /// let mut iter = chunker.split_file_iter(&path)?;
     ///
     /// for chunk_result in &mut iter {

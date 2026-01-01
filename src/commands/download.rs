@@ -1,10 +1,11 @@
 use crate::chunking::{FileAssembler, FileChunker};
-use crate::config::{get_default_relays, validate_relays};
+use crate::config::{get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::manifest::Manifest;
 use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -90,7 +91,7 @@ async fn fetch_manifest_from_relays(
         }
 
         client.connect().await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        client.wait_for_connection(Duration::from_secs(5)).await;
 
         match client.fetch_events(filter.clone(), Duration::from_secs(10)).await {
             Ok(events) => {
@@ -125,25 +126,16 @@ pub async fn execute(
     manifest_path: Option<PathBuf>,
     file_hash: Option<String>,
     output: Option<PathBuf>,
+    key_file: Option<&str>,
     show_stats: bool,
-    private_key: Option<String>,
-    relays: Vec<String>,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load manifest from file or fetch from relays
     let manifest = if let Some(path) = manifest_path {
         Manifest::load_from_file(&path)?
     } else if let Some(hash) = file_hash {
-        // Use provided relays or defaults
-        let relay_list: Vec<String> = if relays.is_empty() {
-            get_default_relays()
-        } else {
-            validate_relays(&relays)
-        };
-
-        if relay_list.is_empty() {
-            return Err(anyhow::anyhow!("No valid relay URLs provided"));
-        }
+        // Use index relays to fetch manifest
+        let relay_list = get_index_relays();
 
         println!("Fetching manifest for hash: {}", hash);
         fetch_manifest_from_relays(&hash, &relay_list, verbose).await?
@@ -153,29 +145,63 @@ pub async fn execute(
         ));
     };
 
+    // Determine output path early to check for existing file
+    let output_path = output.unwrap_or_else(|| PathBuf::from(&manifest.file_name));
+
+    // Check if output file already exists
+    if output_path.exists() {
+        println!("File already exists: {}", output_path.display());
+        print!("Overwrite? [y/N] ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        let input = input.trim().to_lowercase();
+        if input != "y" && input != "yes" {
+            println!("Download cancelled.");
+            return Ok(());
+        }
+    }
+
     println!("Downloading: {} ({} bytes)", manifest.file_name, manifest.file_size);
     println!("File hash:   {}", manifest.file_hash);
     println!("Chunks:      {}", manifest.total_chunks);
     println!("Chunk size:  {} bytes", manifest.chunk_size);
+    println!("Encryption:  {}", manifest.encryption);
 
-    // 2. Setup client
-    let keys = match private_key {
-        Some(key) => Keys::parse(&key)?,
-        None => Keys::generate(),
+    // 2. Setup decryption keys if file is encrypted
+    let decrypt_keys = if manifest.encryption == EncryptionAlgorithm::Nip44 {
+        let private_key = get_private_key(key_file)?;
+        let keys = Keys::parse(&private_key)?;
+
+        // Verify pubkey matches manifest
+        let manifest_pubkey = PublicKey::parse(&manifest.pubkey)?;
+        if keys.public_key() != manifest_pubkey {
+            return Err(anyhow::anyhow!(
+                "Key mismatch: your pubkey doesn't match the file's pubkey.\n\
+                 File was encrypted by: {}\n\
+                 Your pubkey: {}",
+                manifest.pubkey,
+                keys.public_key().to_bech32()?
+            ));
+        }
+        Some(keys)
+    } else {
+        None
     };
+
+    // Use random keys for relay connection (read-only access)
+    let client_keys = Keys::generate();
 
     // Parse pubkey from manifest
     let author_pubkey = PublicKey::parse(&manifest.pubkey)?;
 
-    // Use relays from manifest, override with CLI if provided
-    let relay_list = if relays.is_empty() {
-        manifest.relays.clone()
-    } else {
-        validate_relays(&relays)
-    };
+    // Use relays from manifest (data relays where chunks are stored)
+    let relay_list = manifest.relays.clone();
 
     if relay_list.is_empty() {
-        return Err(anyhow::anyhow!("No valid relay URLs available"));
+        return Err(anyhow::anyhow!("Manifest contains no relay URLs"));
     }
 
     println!("\nConnecting to {} relays...\n", relay_list.len());
@@ -207,7 +233,7 @@ pub async fn execute(
             pb.suspend(|| println!("  Fetching from: {}", relay_url));
         }
 
-        let client = Client::new(keys.clone());
+        let client = Client::new(client_keys.clone());
         let mut relay_stat = RelayStats::default();
 
         if let Err(e) = client.add_relay(relay_url).await {
@@ -219,7 +245,7 @@ pub async fn execute(
         }
 
         client.connect().await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        client.wait_for_connection(Duration::from_secs(5)).await;
 
         let start = Instant::now();
 
@@ -229,7 +255,7 @@ pub async fn execute(
                 relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
 
                 for event in events.iter() {
-                    match parse_chunk_event(event) {
+                    match parse_chunk_event(event, decrypt_keys.as_ref()) {
                         Ok(chunk_data) => {
                             relay_stat.chunks_found.insert(chunk_data.index);
 
@@ -294,8 +320,6 @@ pub async fn execute(
     }
 
     // 5. Reassemble file
-    let output_path = output.unwrap_or_else(|| PathBuf::from(&manifest.file_name));
-
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
