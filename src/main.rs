@@ -7,6 +7,7 @@ mod error;
 mod manifest;
 mod nostr;
 mod relay;
+mod session;
 
 use clap::Parser;
 use cli::{Cli, Commands};

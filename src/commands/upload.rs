@@ -7,8 +7,10 @@ use crate::nostr::{
     create_chunk_event, create_file_index_event, create_file_index_filter, create_manifest_event,
     parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry,
 };
+use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
+use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -66,7 +68,47 @@ pub async fn execute(
 
     println!("File: {} ({} bytes)", file_name, file_size);
 
-    // 4. Split file into chunks
+    // 4. Compute SHA512 for session tracking and split file into chunks
+    println!("Computing file hash...");
+    let file_hash_full = compute_file_sha512(&file)?;
+
+    // Check for existing session
+    let session_exists = UploadSession::exists(&file_hash_full)?;
+    let mut resuming = false;
+
+    if session_exists {
+        // Try to open session to get progress info
+        match UploadSession::open(&file_hash_full) {
+            Ok(existing_session) => {
+                let published = existing_session.get_published_count()?;
+                let total = existing_session.total_chunks;
+                drop(existing_session); // Release the lock
+
+                print!(
+                    "Resume interrupted upload? ({}/{} chunks done) [Y/n] ",
+                    published, total
+                );
+                io::stdout().flush()?;
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+
+                let input = input.trim().to_lowercase();
+                if input.is_empty() || input == "y" || input == "yes" {
+                    resuming = true;
+                } else {
+                    println!("Starting fresh upload...");
+                    UploadSession::delete(&file_hash_full)?;
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not open existing session: {}", e);
+                eprintln!("Starting fresh upload...");
+                UploadSession::delete(&file_hash_full)?;
+            }
+        }
+    }
+
     println!("Splitting file into chunks...");
     let chunker = FileChunker::new(chunk_size)?;
     let (file_hash, chunks) = chunker.split_file(&file)?;
@@ -144,7 +186,37 @@ pub async fn execute(
 
     println!("Encryption: {}", encryption);
 
-    // 6. Publish chunks with progress
+    // 6. Create or resume upload session
+    let session = if resuming {
+        UploadSession::open(&file_hash_full)?
+    } else {
+        let meta = UploadMeta {
+            file_path: file.clone(),
+            file_hash: file_hash.clone(),
+            file_hash_full: file_hash_full.clone(),
+            file_size,
+            chunk_size,
+            total_chunks: chunks.len(),
+            pubkey: keys.public_key().to_bech32()?,
+            encryption,
+            relays: data_relays.clone(),
+        };
+        UploadSession::create(meta)?
+    };
+
+    // Get chunks that still need to be published
+    let unpublished: HashSet<usize> = session.get_unpublished_indices()?.into_iter().collect();
+    let already_published = chunks.len() - unpublished.len();
+
+    if already_published > 0 {
+        println!(
+            "Resuming: {}/{} chunks already published",
+            already_published,
+            chunks.len()
+        );
+    }
+
+    // 7. Publish chunks with progress
     println!("\nUploading {} chunks...", chunks.len());
     let pb = ProgressBar::new(chunks.len() as u64);
     pb.set_style(
@@ -153,7 +225,14 @@ pub async fn execute(
             .progress_chars("#>-"),
     );
 
+    // Set progress to already published count
+    pb.set_position(already_published as u64);
+
     for chunk in &chunks {
+        // Skip already published chunks
+        if !unpublished.contains(&chunk.index) {
+            continue;
+        }
         // Prepare content: encrypt or base64-encode
         let content = if encryption == EncryptionAlgorithm::Nip44 {
             crypto::encrypt_chunk(&keys, &chunk.data)?
@@ -182,7 +261,8 @@ pub async fn execute(
                     if verbose {
                         println!("  Chunk {} -> {}", chunk.index, event_id);
                     }
-                    manifest.add_chunk(chunk.index, event_id, chunk.hash.clone())?;
+                    // Record in session for resumability
+                    session.mark_chunk_published(chunk.index, &event_id, &chunk.hash)?;
                     last_error = None;
                     break;
                 }
@@ -230,7 +310,12 @@ pub async fn execute(
 
     pb.finish_with_message("Upload complete!");
 
-    // 7. Publish manifest to data relays
+    // 8. Build manifest from session data
+    for (index, event_id, hash) in session.get_published_chunks()? {
+        manifest.add_chunk(index, event_id, hash)?;
+    }
+
+    // 9. Publish manifest to data relays
     println!("\nPublishing manifest to data relays...");
     let manifest_event = create_manifest_event(&manifest)?;
     match client.send_event_builder(manifest_event.clone()).await {
@@ -269,6 +354,9 @@ pub async fn execute(
     // 9. Save manifest locally as backup
     let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
     manifest.save_to_file(&manifest_path)?;
+
+    // Clean up session on success
+    session.cleanup()?;
 
     println!("\n=== Upload Summary ===");
     println!("File:       {}", file_name);
