@@ -9,6 +9,7 @@ use crate::nostr::{
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -30,6 +31,23 @@ pub async fn execute(
     // 2. Verify file exists
     if !file.exists() {
         return Err(anyhow::anyhow!("File not found: {}", file.display()));
+    }
+
+    // 3. Confirm unencrypted upload
+    if encryption == EncryptionAlgorithm::None {
+        println!("WARNING: File will be uploaded WITHOUT encryption to public relays.");
+        println!("         Anyone can read the file contents.");
+        print!("Continue? [y/N] ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        let input = input.trim().to_lowercase();
+        if input != "y" && input != "yes" {
+            println!("Upload cancelled.");
+            return Ok(());
+        }
     }
 
     let file_name = file
