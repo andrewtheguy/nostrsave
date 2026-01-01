@@ -161,8 +161,8 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
         .identifier(test_id.clone())
         .limit(1);
 
-    let (can_read, error) = match tokio::time::timeout(timeout, client.fetch_events(filter, timeout)).await {
-        Ok(Ok(events)) => {
+    let (can_read, error) = match client.fetch_events(filter, timeout).await {
+        Ok(events) => {
             if let Some(event) = events.iter().next() {
                 // Verify the content matches
                 if event.content == test_data_b64 {
@@ -174,8 +174,7 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
                 (false, Some("Event not found on read".to_string()))
             }
         }
-        Ok(Err(e)) => (false, Some(format!("Read failed: {}", e))),
-        Err(_) => (false, Some("Read timeout".to_string())),
+        Err(e) => (false, Some(format!("Read failed: {}", e))),
     };
 
     let round_trip_ms = round_trip_start.elapsed().as_millis() as u64;
