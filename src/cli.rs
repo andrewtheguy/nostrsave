@@ -120,4 +120,15 @@ pub enum Commands {
         #[arg(long)]
         pubkey: Option<String>,
     },
+
+    /// Print best relays from discovery results in TOML format
+    BestRelays {
+        /// Path to relay discovery JSON file
+        #[arg(default_value = "relays.json")]
+        input: PathBuf,
+
+        /// Number of relays to output (default: 10)
+        #[arg(short, long, default_value = "10")]
+        count: usize,
+    },
 }

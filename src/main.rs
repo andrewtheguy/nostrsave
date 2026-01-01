@@ -102,6 +102,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::List { pubkey } => {
             commands::list::execute(pubkey, private_key, cli.relay, cli.verbose).await?;
         }
+        Commands::BestRelays { input, count } => {
+            commands::best_relays::execute(input, count)?;
+        }
     }
 
     Ok(())
