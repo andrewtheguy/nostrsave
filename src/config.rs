@@ -54,22 +54,20 @@ pub const FILE_INDEX_EVENT_KIND: u16 = 30080;
 // Config Loading
 // ============================================================================
 
-/// Get the default config file path
+/// Get the default config file path (~/.config/nostrsave/config.toml)
 pub fn default_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("nostrsave").join("config.toml"))
+    dirs::home_dir().map(|h| h.join(".config").join("nostrsave").join("config.toml"))
 }
 
 /// TOML config file locations to check (in order)
 fn toml_config_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    // ~/.config/nostrsave/config.toml
-    if let Some(config_dir) = dirs::config_dir() {
-        paths.push(config_dir.join("nostrsave").join("config.toml"));
-    }
-
-    // ~/.nostrsave/config.toml
     if let Some(home) = dirs::home_dir() {
+        // ~/.config/nostrsave/config.toml (primary)
+        paths.push(home.join(".config").join("nostrsave").join("config.toml"));
+
+        // ~/.nostrsave/config.toml (fallback)
         paths.push(home.join(".nostrsave").join("config.toml"));
     }
 
