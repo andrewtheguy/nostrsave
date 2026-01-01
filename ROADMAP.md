@@ -44,3 +44,13 @@ A web page for downloading files without the CLI:
 - Download assembled file
 - Could be hosted on IPFS or as a static site
 
+### Rotating Data Relay Mode
+Configure a large pool of data relays and rotate through them during uploads:
+- Config specifies a pool of candidate relays
+- Each upload session selects a subset of relays from the pool
+- Optionally rotate relays within a session (different chunks to different relays)
+- Manifest records which relays received which chunks
+- Spreads storage load across many relays
+- Reduces dependency on any single relay's availability
+- Avoids rate limits by distributing requests across relays
+
