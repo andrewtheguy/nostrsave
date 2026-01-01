@@ -12,6 +12,12 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// Threshold ratio for switching to targeted chunk filters.
+/// When missing chunks are less than 1/N of total chunks, use targeted filters
+/// (querying specific chunk identifiers) instead of a full filter (querying all chunks).
+/// Value of 2 means: use targeted filter when less than 50% of chunks are missing.
+const TARGETED_FILTER_THRESHOLD_DIVISOR: usize = 2;
+
 /// Statistics for a single relay
 #[derive(Debug, Default)]
 pub struct RelayStats {
@@ -246,9 +252,10 @@ pub async fn execute(
             break;
         }
 
-        // Use targeted filters only when less than half chunks are missing
+        // Use targeted filters only when below the threshold fraction of chunks are missing
         // (avoids very large filters when relay failed or has few chunks)
-        let filters: Vec<Filter> = if missing_indices.len() * 2 < manifest.total_chunks {
+        let use_targeted = missing_indices.len() * TARGETED_FILTER_THRESHOLD_DIVISOR < manifest.total_chunks;
+        let filters: Vec<Filter> = if use_targeted {
             create_chunk_filter_for_indices(
                 &manifest.file_hash,
                 &missing_indices,
