@@ -15,18 +15,11 @@ pub async fn execute(
     relays: Vec<String>,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // 1. Setup keys
-    let keys = match private_key {
-        Some(key) => Keys::parse(&key)?,
-        None => {
-            let keys = Keys::generate();
-            println!("Generated new keys:");
-            println!("  Public key:  {}", keys.public_key().to_bech32()?);
-            println!("  Private key: {}", keys.secret_key().to_bech32()?);
-            println!();
-            keys
-        }
-    };
+    // 1. Setup keys - require private key
+    let private_key = private_key.ok_or_else(|| {
+        anyhow::anyhow!("Private key required. Use -k <nsec> or --key-file <path>")
+    })?;
+    let keys = Keys::parse(&private_key)?;
 
     // 2. Verify file exists
     if !file.exists() {

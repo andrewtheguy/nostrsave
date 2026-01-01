@@ -9,7 +9,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Private key (hex or nsec). If not provided, generates new keys
+    /// Private key (hex or nsec)
     #[arg(short = 'k', long, global = true, conflicts_with = "key_file")]
     pub private_key: Option<String>,
 
