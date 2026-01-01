@@ -5,6 +5,7 @@ use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_even
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -143,6 +144,25 @@ pub async fn execute(
             "Either manifest file or --hash is required"
         ));
     };
+
+    // Determine output path early to check for existing file
+    let output_path = output.clone().unwrap_or_else(|| PathBuf::from(&manifest.file_name));
+
+    // Check if output file already exists
+    if output_path.exists() {
+        println!("File already exists: {}", output_path.display());
+        print!("Overwrite? [y/N] ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        let input = input.trim().to_lowercase();
+        if input != "y" && input != "yes" {
+            println!("Download cancelled.");
+            return Ok(());
+        }
+    }
 
     println!("Downloading: {} ({} bytes)", manifest.file_name, manifest.file_size);
     println!("File hash:   {}", manifest.file_hash);
@@ -300,8 +320,6 @@ pub async fn execute(
     }
 
     // 5. Reassemble file
-    let output_path = output.unwrap_or_else(|| PathBuf::from(&manifest.file_name));
-
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
