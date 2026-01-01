@@ -13,11 +13,18 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use nostr_sdk::ToBech32;
 
-/// Load private key from file or use provided key
+/// Load private key from CLI args or config file
+/// Priority: CLI -k > CLI --key-file > config.toml [identity]
 fn resolve_private_key(
     private_key: Option<String>,
     key_file: Option<&Path>,
 ) -> anyhow::Result<Option<String>> {
+    // Priority 1: CLI inline key (-k)
+    if private_key.is_some() {
+        return Ok(private_key);
+    }
+
+    // Priority 2: CLI key file (--key-file)
     if let Some(path) = key_file {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read key file '{}': {}", path.display(), e))?;
@@ -25,10 +32,11 @@ fn resolve_private_key(
         if key.is_empty() {
             return Err(anyhow::anyhow!("Key file is empty: {}", path.display()));
         }
-        Ok(Some(key))
-    } else {
-        Ok(private_key)
+        return Ok(Some(key));
     }
+
+    // Priority 3: Config file [identity] section
+    config::resolve_key_from_config()
 }
 
 #[tokio::main]

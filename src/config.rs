@@ -1,4 +1,35 @@
+use serde::Deserialize;
 use std::path::PathBuf;
+
+// ============================================================================
+// TOML Configuration Structs
+// ============================================================================
+
+/// Root configuration structure
+#[derive(Debug, Deserialize, Default)]
+pub struct Config {
+    pub identity: Option<IdentityConfig>,
+    pub relays: Option<RelaysConfig>,
+}
+
+/// Identity configuration (private key)
+#[derive(Debug, Deserialize)]
+pub struct IdentityConfig {
+    /// Inline private key (hex or nsec)
+    pub private_key: Option<String>,
+    /// Path to file containing private key (supports ~ expansion)
+    pub key_file: Option<String>,
+}
+
+/// Relay configuration
+#[derive(Debug, Deserialize)]
+pub struct RelaysConfig {
+    pub urls: Vec<String>,
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
 
 /// Fallback relays if none configured (verified working relays)
 const FALLBACK_RELAYS: &[&str] = &[
@@ -21,8 +52,25 @@ pub const FILE_INDEX_EVENT_KIND: u16 = 30080;
 /// Environment variable for relay list (comma-separated)
 const RELAY_ENV_VAR: &str = "NOSTRSAVE_RELAYS";
 
-/// Config file locations to check (in order)
-fn config_file_paths() -> Vec<PathBuf> {
+/// TOML config file locations to check (in order)
+fn toml_config_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    // ~/.config/nostrsave/config.toml
+    if let Some(config_dir) = dirs::config_dir() {
+        paths.push(config_dir.join("nostrsave").join("config.toml"));
+    }
+
+    // ~/.nostrsave/config.toml
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".nostrsave").join("config.toml"));
+    }
+
+    paths
+}
+
+/// Legacy relay config file locations (for backward compatibility)
+fn legacy_relay_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     // ~/.config/nostrsave/relays.txt
@@ -36,6 +84,76 @@ fn config_file_paths() -> Vec<PathBuf> {
     }
 
     paths
+}
+
+/// Expand ~ to home directory in paths
+fn expand_tilde(path: &str) -> PathBuf {
+    if path.starts_with("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(&path[2..]);
+        }
+    } else if path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    PathBuf::from(path)
+}
+
+/// Load TOML configuration from file
+pub fn load_config() -> Option<Config> {
+    for path in toml_config_paths() {
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                match toml::from_str(&content) {
+                    Ok(config) => return Some(config),
+                    Err(e) => {
+                        eprintln!("Warning: Failed to parse {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve private key from config file
+/// Returns Ok(Some(key)) if found, Ok(None) if not configured, Err on errors
+pub fn resolve_key_from_config() -> anyhow::Result<Option<String>> {
+    let Some(config) = load_config() else {
+        return Ok(None);
+    };
+
+    let Some(identity) = config.identity else {
+        return Ok(None);
+    };
+
+    // Check for conflicting options
+    if identity.private_key.is_some() && identity.key_file.is_some() {
+        return Err(anyhow::anyhow!(
+            "Config error: cannot specify both 'private_key' and 'key_file' in [identity]"
+        ));
+    }
+
+    // Inline key
+    if let Some(key) = identity.private_key {
+        return Ok(Some(key));
+    }
+
+    // Key file with tilde expansion
+    if let Some(key_path) = identity.key_file {
+        let path = expand_tilde(&key_path);
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!("Failed to read key file '{}': {}", path.display(), e)
+        })?;
+        let key = content.trim().to_string();
+        if key.is_empty() {
+            return Err(anyhow::anyhow!("Key file is empty: {}", path.display()));
+        }
+        return Ok(Some(key));
+    }
+
+    Ok(None)
 }
 
 /// Validate a relay URL
@@ -78,9 +196,27 @@ fn load_from_env() -> Option<Vec<String>> {
     }).filter(|v: &Vec<String>| !v.is_empty())
 }
 
-/// Load relays from config file
-fn load_from_config_file() -> Option<Vec<String>> {
-    for path in config_file_paths() {
+/// Load relays from TOML config
+fn load_relays_from_toml() -> Option<Vec<String>> {
+    let config = load_config()?;
+    let relays_config = config.relays?;
+
+    let relays: Vec<String> = relays_config
+        .urls
+        .iter()
+        .filter_map(|url| validate_relay_url(url).ok())
+        .collect();
+
+    if relays.is_empty() {
+        None
+    } else {
+        Some(relays)
+    }
+}
+
+/// Load relays from legacy relays.txt file (backward compatibility)
+fn load_from_legacy_file() -> Option<Vec<String>> {
+    for path in legacy_relay_paths() {
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 let relays: Vec<String> = content
@@ -99,19 +235,24 @@ fn load_from_config_file() -> Option<Vec<String>> {
     None
 }
 
-/// Get default relays with priority: env var > config file > fallback
+/// Get default relays with priority: env var > TOML config > legacy file > fallback
 pub fn get_default_relays() -> Vec<String> {
     // Priority 1: Environment variable
     if let Some(relays) = load_from_env() {
         return relays;
     }
 
-    // Priority 2: Config file
-    if let Some(relays) = load_from_config_file() {
+    // Priority 2: TOML config file
+    if let Some(relays) = load_relays_from_toml() {
         return relays;
     }
 
-    // Priority 3: Fallback defaults
+    // Priority 3: Legacy relays.txt file
+    if let Some(relays) = load_from_legacy_file() {
+        return relays;
+    }
+
+    // Priority 4: Fallback defaults
     FALLBACK_RELAYS.iter().map(|s| s.to_string()).collect()
 }
 
