@@ -111,14 +111,21 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
 
     let index: usize = tag_vec[1].parse()?;
 
-    // Check encryption algorithm
-    let encryption = event
+    // Check encryption algorithm - fail fast on missing or unknown values
+    let encryption_tag = event
         .tags
         .iter()
         .find(|t| t.kind() == TagKind::custom("encryption"))
-        .and_then(|t| t.as_slice().get(1))
-        .and_then(|v| v.parse::<EncryptionAlgorithm>().ok())
-        .unwrap_or(EncryptionAlgorithm::None);
+        .ok_or_else(|| anyhow::anyhow!("Missing encryption tag in chunk event"))?;
+
+    let encryption_value = encryption_tag
+        .as_slice()
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("Encryption tag has no value"))?;
+
+    let encryption = encryption_value
+        .parse::<EncryptionAlgorithm>()
+        .map_err(|e| anyhow::anyhow!("Unsupported encryption algorithm '{}': {}", encryption_value, e))?;
 
     let data = match encryption {
         EncryptionAlgorithm::Nip44 => {
