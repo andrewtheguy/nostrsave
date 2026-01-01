@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -44,13 +44,14 @@ pub enum Commands {
     },
 
     /// Download a file from Nostr relays
+    #[command(group(ArgGroup::new("input").required(true).args(["manifest", "hash"])))]
     Download {
         /// Path to local manifest file
-        #[arg(value_name = "MANIFEST", conflicts_with = "hash")]
+        #[arg(value_name = "MANIFEST", group = "input")]
         manifest: Option<PathBuf>,
 
         /// File hash to fetch manifest from relays (e.g., sha256:abc123...)
-        #[arg(long, conflicts_with = "manifest")]
+        #[arg(long, group = "input")]
         hash: Option<String>,
 
         /// Output file path (defaults to original filename)

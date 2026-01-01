@@ -37,7 +37,7 @@ pub async fn execute(
 
     // 3. Split file into chunks
     println!("Splitting file into chunks...");
-    let chunker = FileChunker::new(chunk_size);
+    let chunker = FileChunker::new(chunk_size)?;
     let (file_hash, chunks) = chunker.split_file(&file)?;
 
     println!("File hash: {}", file_hash);

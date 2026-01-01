@@ -14,8 +14,11 @@ pub struct Chunk {
 }
 
 impl FileChunker {
-    pub fn new(chunk_size: usize) -> Self {
-        Self { chunk_size }
+    pub fn new(chunk_size: usize) -> anyhow::Result<Self> {
+        if chunk_size == 0 {
+            return Err(anyhow::anyhow!("chunk_size must be > 0"));
+        }
+        Ok(Self { chunk_size })
     }
 
     /// Split a file into chunks and compute hashes

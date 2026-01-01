@@ -37,7 +37,11 @@ impl DownloadStats {
 
         for (relay, stats) in relays {
             let found = stats.chunks_found.len();
-            let pct = (found as f64 / self.total_chunks as f64) * 100.0;
+            let pct = if self.total_chunks == 0 {
+                0.0
+            } else {
+                (found as f64 / self.total_chunks as f64) * 100.0
+            };
             let status = if stats.connected { "" } else { " (failed)" };
 
             println!(
@@ -261,21 +265,20 @@ pub async fn execute(
     // 5. Reassemble file
     let output_path = output.unwrap_or_else(|| PathBuf::from(&manifest.file_name));
 
-    println!("\nAssembling file...");
-    let pb = ProgressBar::new(manifest.total_chunks as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} chunks")?
-            .progress_chars("#>-"),
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} Assembling file...")?
     );
+    spinner.enable_steady_tick(Duration::from_millis(100));
 
     let assembler = FileAssembler::new();
     assembler.assemble(&all_chunks, manifest.total_chunks, &output_path)?;
-    pb.finish_and_clear();
+    spinner.finish_and_clear();
 
     // 6. Verify file hash
     println!("Verifying file integrity...");
-    let chunker = FileChunker::new(manifest.chunk_size);
+    let chunker = FileChunker::new(manifest.chunk_size)?;
     let computed_hash = chunker.compute_file_hash(&output_path)?;
 
     if computed_hash != manifest.file_hash {
