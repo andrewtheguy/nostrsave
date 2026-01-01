@@ -55,8 +55,8 @@ pub enum Commands {
         #[arg(value_name = "FILE")]
         file: PathBuf,
 
-        /// Chunk size in bytes (1KB-65408, default: 65408 - NIP-44 limit)
-        #[arg(short, long, default_value = "65408", value_parser = parse_chunk_size)]
+        /// Chunk size in bytes (1KB-65408, default: 32KB for NIP-44 compatibility)
+        #[arg(short, long, default_value = "32768", value_parser = parse_chunk_size)]
         chunk_size: usize,
 
         /// Output manifest file path (defaults to <filename>.nostrsave)
@@ -112,8 +112,8 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         concurrent: usize,
 
-        /// Chunk size in bytes for round-trip test (default: 65408)
-        #[arg(long, default_value = "65408", value_parser = parse_chunk_size)]
+        /// Chunk size in bytes for round-trip test (default: 32KB)
+        #[arg(long, default_value = "32768", value_parser = parse_chunk_size)]
         chunk_size: usize,
     },
 

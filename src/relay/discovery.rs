@@ -268,7 +268,7 @@ mod tests {
             can_write: true,
             can_read: true,
             round_trip_ms: Some(500),
-            payload_size: 65408,
+            payload_size: 32768,
             error: None,
         };
         assert!(working.is_working());
@@ -280,7 +280,7 @@ mod tests {
             can_write: false,
             can_read: false,
             round_trip_ms: None,
-            payload_size: 65408,
+            payload_size: 32768,
             error: Some("timeout".to_string()),
         };
         assert!(!not_connected.is_working());
@@ -292,7 +292,7 @@ mod tests {
             can_write: true,
             can_read: false,
             round_trip_ms: Some(500),
-            payload_size: 65408,
+            payload_size: 32768,
             error: Some("read failed".to_string()),
         };
         assert!(!no_read.is_working());
