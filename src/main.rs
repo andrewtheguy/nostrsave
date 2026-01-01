@@ -5,6 +5,7 @@ mod config;
 mod error;
 mod manifest;
 mod nostr;
+mod relay;
 
 use std::path::Path;
 
@@ -79,6 +80,15 @@ async fn main() -> anyhow::Result<()> {
             println!();
             println!("Save your private key securely!");
             println!("Use -k <nsec> or --key-file <path> to specify your key when uploading.");
+        }
+        Commands::DiscoverRelays {
+            output,
+            configured_only,
+            timeout,
+            concurrent,
+        } => {
+            commands::discover_relays::execute(output, configured_only, timeout, concurrent, cli.verbose)
+                .await?;
         }
     }
 
