@@ -41,6 +41,11 @@ async fn main() -> anyhow::Result<()> {
             println!("Save your private key securely!");
             println!("Add to config.toml [identity] section.");
         }
+        Commands::Pubkey => {
+            let private_key = config::get_private_key()?;
+            let keys = nostr_sdk::Keys::parse(&private_key)?;
+            println!("{}", keys.public_key().to_bech32()?);
+        }
         Commands::DiscoverRelays {
             output,
             configured_only,

@@ -79,6 +79,9 @@ pub enum Commands {
     /// Generate a new Nostr keypair
     Keygen,
 
+    /// Show public key from config
+    Pubkey,
+
     /// Discover and test Nostr relays
     DiscoverRelays {
         /// Output file for relay discovery results (JSON)
