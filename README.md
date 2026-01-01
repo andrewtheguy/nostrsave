@@ -13,6 +13,14 @@ A CLI tool for storing and retrieving files on the Nostr network.
 
 ## Installation
 
+Quick install (Linux/macOS):
+
+```bash
+curl -fsSL https://andrewtheguy.github.io/nostrsave/install.sh | bash
+```
+
+Build from source:
+
 ```bash
 cargo install --path .
 ```
