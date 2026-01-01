@@ -321,6 +321,30 @@ async fn publish_to_index_relays(
     client.connect().await;
     client.wait_for_connection(Duration::from_secs(10)).await;
 
+    // Verify at least one relay is connected
+    let connected_relays: Vec<_> = client
+        .relays()
+        .await
+        .into_iter()
+        .filter(|(_, r)| r.is_connected())
+        .map(|(url, _)| url.to_string())
+        .collect();
+
+    if connected_relays.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No index relays connected. Added {} relays but none established connection.",
+            added_count
+        ));
+    }
+
+    if verbose {
+        println!(
+            "  Connected to {}/{} index relays",
+            connected_relays.len(),
+            added_count
+        );
+    }
+
     // 2. Publish manifest to index relays
     let manifest_event_id = match client.send_event_builder(manifest_event).await {
         Ok(output) => output.val.to_bech32()?,
@@ -376,18 +400,26 @@ async fn publish_to_index_relays(
     index.add_entry(entry);
 
     // 4. Publish updated index
-    if let Ok(event_builder) = create_file_index_event(&index) {
-        match client.send_event_builder(event_builder).await {
-            Ok(_) => {
-                if verbose {
-                    println!("  Index updated with {} files", index.len());
+    match create_file_index_event(&index) {
+        Ok(event_builder) => {
+            match client.send_event_builder(event_builder).await {
+                Ok(_) => {
+                    if verbose {
+                        println!("  Index updated with {} files", index.len());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("WARNING: Failed to publish file index. File may not appear in 'nostrsave list'.");
+                    if verbose {
+                        eprintln!("  Error: {}", e);
+                    }
                 }
             }
-            Err(e) => {
-                eprintln!("WARNING: Failed to publish file index. File may not appear in 'nostrsave list'.");
-                if verbose {
-                    eprintln!("  Error: {}", e);
-                }
+        }
+        Err(e) => {
+            eprintln!("WARNING: Failed to create file index event; file index not published.");
+            if verbose {
+                eprintln!("  Error: {}", e);
             }
         }
     }

@@ -1,3 +1,4 @@
+use nostr_sdk::Keys;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use url::Url;
@@ -167,7 +168,7 @@ pub fn require_config() -> anyhow::Result<Config> {
 // Identity Resolution
 // ============================================================================
 
-/// Read private key from a key file path
+/// Read and validate private key from a key file path
 fn read_key_file(key_path: &str) -> anyhow::Result<String> {
     let path = expand_tilde(key_path);
     let content = std::fs::read_to_string(&path).map_err(|e| {
@@ -177,6 +178,16 @@ fn read_key_file(key_path: &str) -> anyhow::Result<String> {
     if key.is_empty() {
         return Err(anyhow::anyhow!("Key file is empty: {}", path.display()));
     }
+
+    // Validate key format (hex or bech32 nsec)
+    Keys::parse(&key).map_err(|e| {
+        anyhow::anyhow!(
+            "Invalid private key format in '{}': {}. Expected 64-char hex or nsec1... bech32.",
+            path.display(),
+            e
+        )
+    })?;
+
     Ok(key)
 }
 
