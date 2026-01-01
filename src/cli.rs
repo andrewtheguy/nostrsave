@@ -1,6 +1,31 @@
 use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Minimum chunk size (1 KB)
+const MIN_CHUNK_SIZE: usize = 1024;
+/// Maximum chunk size (1 MB)
+const MAX_CHUNK_SIZE: usize = 1_048_576;
+
+/// Parse and validate chunk size within allowed bounds
+fn parse_chunk_size(s: &str) -> Result<usize, String> {
+    let value: usize = s.parse().map_err(|_| format!("'{}' is not a valid number", s))?;
+
+    if value < MIN_CHUNK_SIZE {
+        return Err(format!(
+            "chunk size must be at least {} bytes (1 KB), got {}",
+            MIN_CHUNK_SIZE, value
+        ));
+    }
+    if value > MAX_CHUNK_SIZE {
+        return Err(format!(
+            "chunk size must be at most {} bytes (1 MB), got {}",
+            MAX_CHUNK_SIZE, value
+        ));
+    }
+
+    Ok(value)
+}
+
 #[derive(Parser)]
 #[command(name = "nostrsave")]
 #[command(about = "Store and retrieve files on Nostr", long_about = None)]
@@ -34,8 +59,8 @@ pub enum Commands {
         #[arg(value_name = "FILE")]
         file: PathBuf,
 
-        /// Chunk size in bytes (default: 65536 = 64KB)
-        #[arg(short, long, default_value = "65536")]
+        /// Chunk size in bytes (1KB-1MB, default: 64KB)
+        #[arg(short, long, default_value = "65536", value_parser = parse_chunk_size)]
         chunk_size: usize,
 
         /// Output manifest file path (defaults to <filename>.nostrsave)
