@@ -87,8 +87,8 @@ pub async fn execute(
 
     println!("Indexed files ({}):\n", index.len());
     println!(
-        "  {:<3} {:<35} {:>12}  {:<20}  {}",
-        "#", "Name", "Size", "Uploaded", "Hash"
+        "  {:<3} {:<35} {:>12}  {:<20}  Hash",
+        "#", "Name", "Size", "Uploaded"
     );
     println!("  {}", "-".repeat(100));
 

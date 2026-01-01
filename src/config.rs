@@ -88,9 +88,9 @@ fn legacy_relay_paths() -> Vec<PathBuf> {
 
 /// Expand ~ to home directory in paths
 fn expand_tilde(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            return home.join(&path[2..]);
+            return home.join(stripped);
         }
     } else if path == "~" {
         if let Some(home) = dirs::home_dir() {
