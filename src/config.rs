@@ -1,6 +1,3 @@
-/// Default chunk size: 64 KB
-pub const DEFAULT_CHUNK_SIZE: usize = 65536;
-
 /// Default relays for uploading and downloading
 pub const DEFAULT_RELAYS: &[&str] = &[
     "wss://relay.damus.io",

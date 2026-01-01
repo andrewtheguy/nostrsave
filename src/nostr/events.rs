@@ -7,9 +7,7 @@ use crate::config::CHUNK_EVENT_KIND;
 #[derive(Debug)]
 pub struct ChunkEventData {
     pub index: usize,
-    pub total: usize,
     pub data: Vec<u8>,
-    pub hash: String,
 }
 
 /// Create a Nostr event for a file chunk
@@ -76,24 +74,9 @@ pub fn parse_chunk_event(event: &Event) -> anyhow::Result<ChunkEventData> {
     }
 
     let index: usize = tag_vec[1].parse()?;
-    let total: usize = tag_vec[2].parse()?;
-
-    // Find hash tag
-    let hash = event
-        .tags
-        .iter()
-        .find(|t| t.kind() == TagKind::custom("hash"))
-        .and_then(|t| t.as_slice().get(1))
-        .map(|s| s.to_string())
-        .unwrap_or_default();
 
     // Decode base64 content
     let data = base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?;
 
-    Ok(ChunkEventData {
-        index,
-        total,
-        data,
-        hash,
-    })
+    Ok(ChunkEventData { index, data })
 }
