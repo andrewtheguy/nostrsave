@@ -68,13 +68,17 @@ urls = [
     "wss://relay.damus.io",
     "wss://nos.lol",
 ]
+
+[encryption]
+# Default encryption algorithm: "nip44" (default) or "none"
+algorithm = "nip44"
 ```
 
 ### Configuration Priority
 
-1. CLI flag (`--key-file`)
+1. CLI flags (`--key-file`, `--encryption`)
 2. TOML config (`config.toml`)
-3. Built-in fallback relays (for index relays only)
+3. Built-in defaults (nip44 encryption, fallback relays for index)
 
 ## Commands
 

@@ -70,8 +70,8 @@ pub enum Commands {
         output: Option<PathBuf>,
 
         /// Encryption algorithm: nip44 (default) or none
-        #[arg(short, long, default_value = "nip44", value_parser = parse_encryption)]
-        encryption: EncryptionAlgorithm,
+        #[arg(short, long, value_parser = parse_encryption)]
+        encryption: Option<EncryptionAlgorithm>,
     },
 
     /// Download a file from Nostr relays

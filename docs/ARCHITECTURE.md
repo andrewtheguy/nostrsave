@@ -154,14 +154,15 @@ Tags:
 ┌─────────────────────────────────────────────────────────┐
 │                    Priority Order                        │
 ├─────────────────────────────────────────────────────────┤
-│ 1. CLI flag (--key-file)                                │
+│ 1. CLI flags (--key-file, --encryption)                 │
 │    ↓                                                     │
 │ 2. TOML config (~/.config/nostrsave/config.toml)        │
 │    - [identity] private_key or key_file                 │
 │    - [data_relays] for chunk storage                    │
 │    - [index_relays] for manifest/index discovery        │
+│    - [encryption] algorithm (nip44 or none)             │
 │    ↓                                                     │
-│ 3. Fallback relays (index relays only)                  │
+│ 3. Built-in defaults (nip44, fallback relays)           │
 └─────────────────────────────────────────────────────────┘
 ```
 
