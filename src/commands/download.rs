@@ -178,7 +178,7 @@ pub async fn execute(
         return Err(anyhow::anyhow!("No valid relay URLs available"));
     }
 
-    println!("\nConnecting to {} relays...", relay_list.len());
+    println!("\nConnecting to {} relays...\n", relay_list.len());
 
     let mut stats = DownloadStats {
         total_chunks: manifest.total_chunks,
@@ -190,16 +190,30 @@ pub async fn execute(
 
     let filter = create_chunk_filter(&manifest.file_hash, Some(&author_pubkey));
 
-    for relay_url in &relay_list {
+    // Set up progress bar for chunk retrieval
+    let pb = ProgressBar::new(manifest.total_chunks as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} chunks ({msg})")?
+            .progress_chars("█▓░"),
+    );
+    pb.set_message("starting...");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
+    for (relay_idx, relay_url) in relay_list.iter().enumerate() {
+        pb.set_message(format!("relay {}/{}", relay_idx + 1, relay_list.len()));
+
         if verbose {
-            println!("  Fetching from: {}", relay_url);
+            pb.suspend(|| println!("  Fetching from: {}", relay_url));
         }
 
         let client = Client::new(keys.clone());
         let mut relay_stat = RelayStats::default();
 
         if let Err(e) = client.add_relay(relay_url).await {
-            eprintln!("  Failed to add relay {}: {}", relay_url, e);
+            if verbose {
+                pb.suspend(|| eprintln!("  Failed to add relay {}: {}", relay_url, e));
+            }
             stats.relay_stats.insert(relay_url.clone(), relay_stat);
             continue;
         }
@@ -222,37 +236,46 @@ pub async fn execute(
                             // Only store if we don't have this chunk yet
                             if let std::collections::hash_map::Entry::Vacant(e) = all_chunks.entry(chunk_data.index) {
                                 e.insert(chunk_data.data);
+                                pb.set_position(all_chunks.len() as u64);
                             }
                         }
                         Err(e) => {
                             if verbose {
-                                eprintln!("    Failed to parse event: {}", e);
+                                pb.suspend(|| eprintln!("    Failed to parse event: {}", e));
                             }
                         }
                     }
                 }
 
                 if verbose {
-                    println!(
+                    pb.suspend(|| println!(
                         "    Found {} chunks in {}ms",
                         relay_stat.chunks_found.len(),
                         relay_stat.fetch_time_ms
-                    );
+                    ));
                 }
             }
             Err(e) => {
                 relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
                 if verbose {
-                    eprintln!("    Fetch error: {}", e);
+                    pb.suspend(|| eprintln!("    Fetch error: {}", e));
                 }
             }
         }
 
         stats.relay_stats.insert(relay_url.clone(), relay_stat);
         client.disconnect().await;
+
+        // Exit early if we have all chunks
+        if all_chunks.len() == manifest.total_chunks {
+            pb.set_position(manifest.total_chunks as u64);
+            pb.set_message("complete!");
+            break;
+        }
     }
 
-    println!("\nRetrieved {}/{} chunks", all_chunks.len(), manifest.total_chunks);
+    pb.finish_and_clear();
+    println!("Retrieved {}/{} chunks\n", all_chunks.len(), manifest.total_chunks);
 
     // 4. Check for missing chunks
     let missing: Vec<usize> = (0..manifest.total_chunks)

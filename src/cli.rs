@@ -90,4 +90,27 @@ pub enum Commands {
 
     /// Generate a new Nostr keypair
     Keygen,
+
+    /// Discover and test Nostr relays
+    DiscoverRelays {
+        /// Output file for relay discovery results (JSON)
+        #[arg(short, long, default_value = "relays.json")]
+        output: PathBuf,
+
+        /// Only test configured relays, skip public discovery
+        #[arg(long)]
+        configured_only: bool,
+
+        /// Connection timeout in seconds
+        #[arg(long, default_value = "10")]
+        timeout: u64,
+
+        /// Maximum concurrent relay tests
+        #[arg(long, default_value = "20")]
+        concurrent: usize,
+
+        /// Chunk size in bytes for round-trip test (default: 64KB)
+        #[arg(long, default_value = "65536", value_parser = parse_chunk_size)]
+        chunk_size: usize,
+    },
 }
