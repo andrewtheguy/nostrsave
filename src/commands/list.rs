@@ -90,20 +90,20 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
     println!("  {}", "-".repeat(105));
 
     for (i, entry) in index.entries.iter().enumerate() {
-        let size_str = format_size(entry.file_size);
-        let date_str = format_timestamp(entry.uploaded_at);
-        let enc_str = entry.encryption.to_string();
-        let hash_short = if entry.file_hash.chars().count() > 20 {
-            format!("{}...", entry.file_hash.chars().take(20).collect::<String>())
+        let size_str = format_size(entry.file_size());
+        let date_str = format_timestamp(entry.uploaded_at());
+        let enc_str = entry.encryption().to_string();
+        let hash_short = if entry.file_hash().chars().count() > 20 {
+            format!("{}...", entry.file_hash().chars().take(20).collect::<String>())
         } else {
-            entry.file_hash.clone()
+            entry.file_hash().to_string()
         };
 
         // Truncate filename if too long
-        let name = if entry.file_name.chars().count() > 35 {
-            format!("{}...", entry.file_name.chars().take(32).collect::<String>())
+        let name = if entry.file_name().chars().count() > 35 {
+            format!("{}...", entry.file_name().chars().take(32).collect::<String>())
         } else {
-            entry.file_name.clone()
+            entry.file_name().to_string()
         };
 
         println!(
@@ -120,7 +120,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
     // Always show full hashes for easy copying
     println!("\nHashes:");
     for (i, entry) in index.entries.iter().enumerate() {
-        println!("  #{}: {}", i + 1, entry.file_hash);
+        println!("  #{}: {}", i + 1, entry.file_hash());
     }
 
     println!("\nDownload with: nostrsave download --hash <hash>");

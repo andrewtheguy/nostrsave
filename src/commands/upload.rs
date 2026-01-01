@@ -362,13 +362,13 @@ async fn publish_to_index_relays(
     };
 
     // 3. Add new entry
-    let entry = FileIndexEntry {
-        file_hash: file_hash.to_string(),
-        file_name: file_name.to_string(),
+    let entry = FileIndexEntry::new(
+        file_hash.to_string(),
+        file_name.to_string(),
         file_size,
         uploaded_at,
         encryption,
-    };
+    )?;
     index.add_entry(entry);
 
     // 4. Publish updated index

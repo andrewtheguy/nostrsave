@@ -1,6 +1,6 @@
 use crate::config::{EncryptionAlgorithm, FILE_INDEX_EVENT_KIND};
 use nostr_sdk::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Identifier for the file index replaceable event
 pub const FILE_INDEX_IDENTIFIER: &str = "nostrsave-index";
@@ -8,14 +8,145 @@ pub const FILE_INDEX_IDENTIFIER: &str = "nostrsave-index";
 /// Current file index version
 pub const CURRENT_FILE_INDEX_VERSION: u8 = 1;
 
+/// Expected length of SHA-256 hash in hex (64 characters)
+const SHA256_HEX_LEN: usize = 64;
+
 /// A single entry in the file index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FileIndexEntry {
-    pub file_hash: String,
-    pub file_name: String,
-    pub file_size: u64,
-    pub uploaded_at: u64,
-    pub encryption: EncryptionAlgorithm,
+    file_hash: String,
+    file_name: String,
+    file_size: u64,
+    uploaded_at: u64,
+    encryption: EncryptionAlgorithm,
+}
+
+impl FileIndexEntry {
+    /// Create a new validated file index entry.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - `file_hash` doesn't start with "sha256:" or has invalid hex
+    /// - `file_name` is empty or contains path separators
+    /// - `file_size` is zero
+    /// - `uploaded_at` is zero
+    pub fn new(
+        file_hash: String,
+        file_name: String,
+        file_size: u64,
+        uploaded_at: u64,
+        encryption: EncryptionAlgorithm,
+    ) -> anyhow::Result<Self> {
+        // Validate file_hash format: "sha256:<64 hex chars>"
+        if !file_hash.starts_with("sha256:") {
+            return Err(anyhow::anyhow!(
+                "Invalid file_hash: must start with 'sha256:', got '{}'",
+                file_hash
+            ));
+        }
+        let hex_part = &file_hash[7..];
+        if hex_part.len() != SHA256_HEX_LEN {
+            return Err(anyhow::anyhow!(
+                "Invalid file_hash: expected {} hex characters, got {}",
+                SHA256_HEX_LEN,
+                hex_part.len()
+            ));
+        }
+        if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(anyhow::anyhow!(
+                "Invalid file_hash: contains non-hex characters"
+            ));
+        }
+
+        // Validate file_name: non-empty and no path separators
+        if file_name.is_empty() {
+            return Err(anyhow::anyhow!("Invalid file_name: cannot be empty"));
+        }
+        if file_name.contains('/') || file_name.contains('\\') {
+            return Err(anyhow::anyhow!(
+                "Invalid file_name: cannot contain path separators"
+            ));
+        }
+
+        // Validate file_size > 0
+        if file_size == 0 {
+            return Err(anyhow::anyhow!("Invalid file_size: must be greater than 0"));
+        }
+
+        // Validate uploaded_at > 0
+        if uploaded_at == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid uploaded_at: must be a valid Unix timestamp"
+            ));
+        }
+
+        Ok(Self {
+            file_hash,
+            file_name,
+            file_size,
+            uploaded_at,
+            encryption,
+        })
+    }
+
+    /// Get the file hash
+    #[must_use]
+    pub fn file_hash(&self) -> &str {
+        &self.file_hash
+    }
+
+    /// Get the file name
+    #[must_use]
+    pub fn file_name(&self) -> &str {
+        &self.file_name
+    }
+
+    /// Get the file size
+    #[must_use]
+    pub fn file_size(&self) -> u64 {
+        self.file_size
+    }
+
+    /// Get the upload timestamp
+    #[must_use]
+    pub fn uploaded_at(&self) -> u64 {
+        self.uploaded_at
+    }
+
+    /// Get the encryption algorithm
+    #[must_use]
+    pub fn encryption(&self) -> EncryptionAlgorithm {
+        self.encryption
+    }
+}
+
+impl<'de> Deserialize<'de> for FileIndexEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Deserialize into a raw struct first
+        #[derive(Deserialize)]
+        struct RawFileIndexEntry {
+            file_hash: String,
+            file_name: String,
+            file_size: u64,
+            uploaded_at: u64,
+            encryption: EncryptionAlgorithm,
+        }
+
+        let raw = RawFileIndexEntry::deserialize(deserializer)?;
+
+        // Validate using the constructor
+        FileIndexEntry::new(
+            raw.file_hash,
+            raw.file_name,
+            raw.file_size,
+            raw.uploaded_at,
+            raw.encryption,
+        )
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 /// The file index containing all uploaded files for a user
@@ -36,7 +167,11 @@ impl FileIndex {
 
     /// Add an entry, replacing any existing entry with the same file_hash
     pub fn add_entry(&mut self, entry: FileIndexEntry) {
-        if let Some(pos) = self.entries.iter().position(|e| e.file_hash == entry.file_hash) {
+        if let Some(pos) = self
+            .entries
+            .iter()
+            .position(|e| e.file_hash() == entry.file_hash())
+        {
             // Update existing entry in-place
             self.entries[pos] = entry;
         } else {
@@ -111,6 +246,9 @@ pub fn parse_file_index_event(event: &Event) -> anyhow::Result<FileIndex> {
 mod tests {
     use super::*;
 
+    // Valid SHA-256 hash for testing (64 hex chars)
+    const TEST_HASH: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
     #[test]
     fn test_file_index_new() {
         let index = FileIndex::new();
@@ -119,16 +257,112 @@ mod tests {
     }
 
     #[test]
+    fn test_file_index_entry_new_valid() {
+        let entry = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "test.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(entry.is_ok());
+
+        let entry = entry.unwrap();
+        assert_eq!(entry.file_hash(), TEST_HASH);
+        assert_eq!(entry.file_name(), "test.txt");
+        assert_eq!(entry.file_size(), 1024);
+        assert_eq!(entry.uploaded_at(), 1234567890);
+        assert_eq!(entry.encryption(), EncryptionAlgorithm::Nip44);
+    }
+
+    #[test]
+    fn test_file_index_entry_invalid_hash() {
+        // Missing sha256: prefix
+        let result = FileIndexEntry::new(
+            "abc123".to_string(),
+            "test.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("sha256:"));
+
+        // Wrong length
+        let result = FileIndexEntry::new(
+            "sha256:abc123".to_string(),
+            "test.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("64"));
+    }
+
+    #[test]
+    fn test_file_index_entry_invalid_filename() {
+        // Empty filename
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+
+        // Path separator
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "path/to/file.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("path separator"));
+    }
+
+    #[test]
+    fn test_file_index_entry_invalid_size() {
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "test.txt".to_string(),
+            0,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("file_size"));
+    }
+
+    #[test]
+    fn test_file_index_entry_invalid_timestamp() {
+        let result = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "test.txt".to_string(),
+            1024,
+            0,
+            EncryptionAlgorithm::Nip44,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("uploaded_at"));
+    }
+
+    #[test]
     fn test_file_index_add_entry() {
         let mut index = FileIndex::new();
 
-        let entry = FileIndexEntry {
-            file_hash: "sha256:abc123".to_string(),
-            file_name: "test.txt".to_string(),
-            file_size: 1024,
-            uploaded_at: 1234567890,
-            encryption: EncryptionAlgorithm::Nip44,
-        };
+        let entry = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "test.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        )
+        .unwrap();
 
         index.add_entry(entry);
         assert_eq!(index.len(), 1);
@@ -138,26 +372,28 @@ mod tests {
     fn test_file_index_no_duplicates() {
         let mut index = FileIndex::new();
 
-        let entry1 = FileIndexEntry {
-            file_hash: "sha256:abc123".to_string(),
-            file_name: "test.txt".to_string(),
-            file_size: 1024,
-            uploaded_at: 1234567890,
-            encryption: EncryptionAlgorithm::Nip44,
-        };
+        let entry1 = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "test.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        )
+        .unwrap();
 
-        let entry2 = FileIndexEntry {
-            file_hash: "sha256:abc123".to_string(),
-            file_name: "test_updated.txt".to_string(),
-            file_size: 2048,
-            uploaded_at: 1234567900,
-            encryption: EncryptionAlgorithm::None,
-        };
+        let entry2 = FileIndexEntry::new(
+            TEST_HASH.to_string(),
+            "test_updated.txt".to_string(),
+            2048,
+            1234567900,
+            EncryptionAlgorithm::None,
+        )
+        .unwrap();
 
         index.add_entry(entry1);
-        index.add_entry(entry2.clone());
+        index.add_entry(entry2);
 
         assert_eq!(index.len(), 1);
-        assert_eq!(index.entries[0].file_name, "test_updated.txt");
+        assert_eq!(index.entries[0].file_name(), "test_updated.txt");
     }
 }
