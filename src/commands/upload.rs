@@ -57,17 +57,56 @@ pub async fn execute(
     println!("\nConnecting to {} relays...", relay_list.len());
 
     let client = Client::new(keys.clone());
+    let mut added_relays = Vec::new();
     for relay in &relay_list {
-        if let Err(e) = client.add_relay(relay).await {
-            eprintln!("  Failed to add relay {}: {}", relay, e);
-        } else if verbose {
-            println!("  Added relay: {}", relay);
+        match client.add_relay(relay).await {
+            Ok(_) => {
+                added_relays.push(relay.clone());
+                if verbose {
+                    println!("  Added relay: {}", relay);
+                }
+            }
+            Err(e) => {
+                eprintln!("  Failed to add relay {}: {}", relay, e);
+            }
         }
     }
+
+    if added_relays.is_empty() {
+        return Err(anyhow::anyhow!("No relays could be added"));
+    }
+
     client.connect().await;
 
     // Wait a bit for connections to establish
     tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Verify at least one relay is connected
+    let connected_relays: Vec<_> = client
+        .relays()
+        .await
+        .into_iter()
+        .filter(|(_, r)| r.is_connected())
+        .map(|(url, _)| url.to_string())
+        .collect();
+
+    if connected_relays.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No relays connected. Added {} relays but none established connection.",
+            added_relays.len()
+        ));
+    }
+
+    println!(
+        "Connected to {}/{} relays",
+        connected_relays.len(),
+        added_relays.len()
+    );
+    if verbose {
+        for relay in &connected_relays {
+            println!("  Connected: {}", relay);
+        }
+    }
 
     // 5. Create manifest
     let mut manifest = Manifest::new(
