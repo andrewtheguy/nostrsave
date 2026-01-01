@@ -11,7 +11,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Maximum number of retry attempts for publishing events
 const MAX_RETRIES: u32 = 3;
@@ -197,7 +197,11 @@ pub async fn execute(
                     if attempt < MAX_RETRIES {
                         // Calculate delay with exponential backoff and jitter
                         let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                        let jitter = (Instant::now().elapsed().subsec_nanos() % 200) as u64;
+                        let jitter = (SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .subsec_nanos()
+                            % 200) as u64;
                         let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
 
                         if verbose {
