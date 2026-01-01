@@ -1,5 +1,5 @@
 use crate::chunking::{FileAssembler, FileChunker};
-use crate::config::{get_index_relays, get_private_key};
+use crate::config::{get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::manifest::Manifest;
 use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -148,10 +148,10 @@ pub async fn execute(
     println!("File hash:   {}", manifest.file_hash);
     println!("Chunks:      {}", manifest.total_chunks);
     println!("Chunk size:  {} bytes", manifest.chunk_size);
-    println!("Encrypted:   {}", if manifest.encrypted { "yes (NIP-44)" } else { "no" });
+    println!("Encryption:  {}", manifest.encryption);
 
     // 2. Setup decryption keys if file is encrypted
-    let decrypt_keys = if manifest.encrypted {
+    let decrypt_keys = if manifest.encryption == EncryptionAlgorithm::Nip44 {
         let private_key = get_private_key(key_file)?;
         let keys = Keys::parse(&private_key)?;
 

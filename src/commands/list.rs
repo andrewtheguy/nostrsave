@@ -88,7 +88,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
     for (i, entry) in index.entries.iter().enumerate() {
         let size_str = format_size(entry.file_size);
         let date_str = format_timestamp(entry.uploaded_at);
-        let enc_str = if entry.encrypted { "yes" } else { "no" };
+        let enc_str = entry.encryption.to_string();
         let hash_short = if entry.file_hash.len() > 20 {
             format!("{}...", &entry.file_hash[..20])
         } else {

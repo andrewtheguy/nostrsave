@@ -1,4 +1,4 @@
-use crate::config::FILE_INDEX_EVENT_KIND;
+use crate::config::{EncryptionAlgorithm, FILE_INDEX_EVENT_KIND};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +12,7 @@ pub struct FileIndexEntry {
     pub file_name: String,
     pub file_size: u64,
     pub uploaded_at: u64,
-    #[serde(default)]
-    pub encrypted: bool,
+    pub encryption: EncryptionAlgorithm,
 }
 
 /// The file index containing all uploaded files for a user
@@ -110,7 +109,7 @@ mod tests {
             file_name: "test.txt".to_string(),
             file_size: 1024,
             uploaded_at: 1234567890,
-            encrypted: true,
+            encryption: EncryptionAlgorithm::Nip44,
         };
 
         index.add_entry(entry);
@@ -126,7 +125,7 @@ mod tests {
             file_name: "test.txt".to_string(),
             file_size: 1024,
             uploaded_at: 1234567890,
-            encrypted: true,
+            encryption: EncryptionAlgorithm::Nip44,
         };
 
         let entry2 = FileIndexEntry {
@@ -134,7 +133,7 @@ mod tests {
             file_name: "test_updated.txt".to_string(),
             file_size: 2048,
             uploaded_at: 1234567900,
-            encrypted: false,
+            encryption: EncryptionAlgorithm::None,
         };
 
         index.add_entry(entry1);

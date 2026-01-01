@@ -1,3 +1,4 @@
+use crate::config::EncryptionAlgorithm;
 use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -5,6 +6,11 @@ use std::path::PathBuf;
 const MIN_CHUNK_SIZE: usize = 1024;
 /// Maximum chunk size (65408 bytes - NIP-44 actual limit in nostr-sdk)
 const MAX_CHUNK_SIZE: usize = 65408;
+
+/// Parse encryption algorithm from string
+fn parse_encryption(s: &str) -> Result<EncryptionAlgorithm, String> {
+    s.parse::<EncryptionAlgorithm>()
+}
 
 /// Parse and validate chunk size within allowed bounds
 fn parse_chunk_size(s: &str) -> Result<usize, String> {
@@ -63,9 +69,9 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Disable NIP-44 encryption (encryption is ON by default)
-        #[arg(long)]
-        no_encrypt: bool,
+        /// Encryption algorithm: nip44 (default) or none
+        #[arg(short, long, default_value = "nip44", value_parser = parse_encryption)]
+        encryption: EncryptionAlgorithm,
     },
 
     /// Download a file from Nostr relays

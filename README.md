@@ -23,11 +23,11 @@ cargo install --path .
 # Generate a keypair
 nostrsave keygen
 
-# Upload a file (encrypted by default)
+# Upload a file (encrypted by default with nip44)
 nostrsave upload photo.jpg --key-file ~/.config/nostrsave/nostr.key
 
 # Upload without encryption
-nostrsave upload photo.jpg --key-file nostr.key --no-encrypt
+nostrsave upload photo.jpg --key-file nostr.key --encryption none
 
 # List your indexed files
 nostrsave list --key-file ~/.config/nostrsave/nostr.key
@@ -86,10 +86,10 @@ Upload a file to Nostr relays. Files are encrypted by default using NIP-44.
 nostrsave upload <FILE> [OPTIONS]
 
 Options:
-  -c, --chunk-size <BYTES>  Chunk size (1KB-65408, default: 32KB)
-  -o, --output <PATH>       Output manifest file path
-  --no-encrypt              Disable NIP-44 encryption
-  -v, --verbose             Verbose output
+  -c, --chunk-size <BYTES>       Chunk size (1KB-65408, default: 32KB)
+  -o, --output <PATH>            Output manifest file path
+  -e, --encryption <ALGORITHM>   Encryption: nip44 (default) or none
+  -v, --verbose                  Verbose output
 ```
 
 ### download
@@ -164,7 +164,7 @@ nostrsave best-relays -c 10
 
 Files are split into chunks (default 32KB), encrypted with NIP-44 (self-encryption), and published as Nostr events. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
 
-**Encryption:** By default, chunks are encrypted using NIP-44 with your own public key. Only you can decrypt them with your private key. Use `--no-encrypt` to upload unencrypted files.
+**Encryption:** By default, chunks are encrypted using NIP-44 with your own public key. Only you can decrypt them with your private key. Use `--encryption none` to upload unencrypted files.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 

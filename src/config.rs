@@ -1,5 +1,39 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+// ============================================================================
+// Encryption Algorithm
+// ============================================================================
+
+/// Encryption algorithm for file chunks
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EncryptionAlgorithm {
+    #[default]
+    Nip44,
+    None,
+}
+
+impl std::fmt::Display for EncryptionAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EncryptionAlgorithm::Nip44 => write!(f, "nip44"),
+            EncryptionAlgorithm::None => write!(f, "none"),
+        }
+    }
+}
+
+impl std::str::FromStr for EncryptionAlgorithm {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "nip44" => Ok(EncryptionAlgorithm::Nip44),
+            "none" => Ok(EncryptionAlgorithm::None),
+            _ => Err(format!("Invalid encryption algorithm: '{}'. Use 'nip44' or 'none'", s)),
+        }
+    }
+}
 
 // ============================================================================
 // TOML Configuration Structs
@@ -11,6 +45,13 @@ pub struct Config {
     pub identity: Option<IdentityConfig>,
     pub data_relays: Option<RelaysConfig>,
     pub index_relays: Option<RelaysConfig>,
+    pub encryption: Option<EncryptionConfig>,
+}
+
+/// Encryption configuration
+#[derive(Debug, Deserialize)]
+pub struct EncryptionConfig {
+    pub algorithm: EncryptionAlgorithm,
 }
 
 /// Identity configuration (private key)
@@ -240,6 +281,20 @@ pub fn get_index_relays() -> Vec<String> {
 
     // Fallback to defaults
     DEFAULT_INDEX_RELAYS.iter().map(|s| s.to_string()).collect()
+}
+
+// ============================================================================
+// Encryption Resolution
+// ============================================================================
+
+/// Get encryption algorithm from config, or return default (Nip44)
+pub fn get_encryption_algorithm() -> EncryptionAlgorithm {
+    if let Some(config) = load_config() {
+        if let Some(encryption) = config.encryption {
+            return encryption.algorithm;
+        }
+    }
+    EncryptionAlgorithm::default()
 }
 
 

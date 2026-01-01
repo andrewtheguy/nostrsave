@@ -21,9 +21,9 @@ async fn main() -> anyhow::Result<()> {
             file,
             chunk_size,
             output,
-            no_encrypt,
+            encryption,
         } => {
-            commands::upload::execute(file, chunk_size, output, cli.key_file.as_deref(), no_encrypt, cli.verbose).await?;
+            commands::upload::execute(file, chunk_size, output, cli.key_file.as_deref(), encryption, cli.verbose).await?;
         }
         Commands::Download {
             manifest,

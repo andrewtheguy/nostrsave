@@ -1,7 +1,7 @@
 use base64::Engine;
 use nostr_sdk::prelude::*;
 
-use crate::config::{CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
+use crate::config::{EncryptionAlgorithm, CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
 use crate::crypto;
 use crate::manifest::Manifest;
 
@@ -21,7 +21,7 @@ pub struct ChunkMetadata<'a> {
     pub chunk_hash: &'a str,
     pub chunk_data: &'a [u8],
     pub filename: &'a str,
-    pub encrypted: bool,
+    pub encryption: EncryptionAlgorithm,
 }
 
 /// Create a Nostr event for a file chunk
@@ -72,8 +72,8 @@ pub fn create_chunk_event(metadata: &ChunkMetadata, content: &str) -> anyhow::Re
             vec![metadata.chunk_data.len().to_string()],
         ))
         .tag(Tag::custom(
-            TagKind::custom("encrypted"),
-            vec![metadata.encrypted.to_string()],
+            TagKind::custom("encryption"),
+            vec![metadata.encryption.to_string()],
         )))
 }
 
@@ -108,16 +108,16 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
 
     let index: usize = tag_vec[1].parse()?;
 
-    // Check if encrypted
-    let is_encrypted = event
+    // Check encryption algorithm
+    let encryption = event
         .tags
         .iter()
-        .find(|t| t.kind() == TagKind::custom("encrypted"))
+        .find(|t| t.kind() == TagKind::custom("encryption"))
         .and_then(|t| t.as_slice().get(1))
-        .map(|v| v == "true")
-        .unwrap_or(false);
+        .and_then(|v| v.parse::<EncryptionAlgorithm>().ok())
+        .unwrap_or(EncryptionAlgorithm::None);
 
-    let data = if is_encrypted {
+    let data = if encryption == EncryptionAlgorithm::Nip44 {
         // Need keys to decrypt
         let keys = keys.ok_or_else(|| {
             anyhow::anyhow!("Chunk is encrypted but no keys provided for decryption")

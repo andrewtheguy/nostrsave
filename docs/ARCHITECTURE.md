@@ -83,7 +83,7 @@ Tags:
   - ["hash", "<chunk_hash>"]               # Chunk integrity
   - ["filename", "<name>"]                 # Original filename
   - ["size", "<bytes>"]                    # Chunk size
-  - ["encrypted", "true|false"]            # Encryption flag
+  - ["encryption", "nip44|none"]            # Encryption algorithm
 ```
 
 ### Manifest Event (Kind 30079)
@@ -111,7 +111,7 @@ Tags:
   "total_chunks": 19,
   "created_at": 1704067200,
   "pubkey": "npub1...",
-  "encrypted": true,
+  "encryption": "nip44",
   "chunks": [
     {"index": 0, "event_id": "note1...", "hash": "sha256:..."},
     ...
@@ -140,7 +140,8 @@ Tags:
       "file_hash": "sha256:abc123...",
       "file_name": "photo.jpg",
       "file_size": 1234567,
-      "uploaded_at": 1704067200
+      "uploaded_at": 1704067200,
+      "encryption": "nip44"
     },
     ...
   ]
@@ -188,7 +189,7 @@ Files are encrypted by default using NIP-44 self-encryption:
 2. **Only you can decrypt:** Only the owner (matching private key) can decrypt the file
 3. **Hash integrity:** File and chunk hashes are computed on original (unencrypted) data
 4. **Per-chunk encryption:** Each chunk is encrypted independently
-5. **Opt-out available:** Use `--no-encrypt` to upload unencrypted files
+5. **Opt-out available:** Use `--encryption none` to upload unencrypted files
 
 ## Relay Discovery
 

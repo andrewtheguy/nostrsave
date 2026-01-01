@@ -26,3 +26,9 @@ urls = [
 #     "wss://relay.damus.io",
 #     "wss://nos.lol"
 # ]
+
+# [encryption]
+# Optional: Default encryption algorithm for uploads
+# Values: "nip44" (default, recommended) or "none"
+# Can be overridden with --encryption flag
+# algorithm = "nip44"

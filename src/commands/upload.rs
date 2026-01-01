@@ -1,6 +1,6 @@
 use base64::Engine;
 use crate::chunking::FileChunker;
-use crate::config::{get_data_relays, get_index_relays, get_private_key};
+use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
@@ -17,7 +17,7 @@ pub async fn execute(
     chunk_size: usize,
     output: Option<PathBuf>,
     key_file: Option<&str>,
-    no_encrypt: bool,
+    encryption: EncryptionAlgorithm,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load config - private key and relays
@@ -109,7 +109,6 @@ pub async fn execute(
     }
 
     // 5. Create manifest (store data relays in manifest for download)
-    let encrypt = !no_encrypt;
     let mut manifest = Manifest::new(
         file_name.clone(),
         file_hash.clone(),
@@ -117,10 +116,10 @@ pub async fn execute(
         chunk_size,
         keys.public_key().to_bech32()?,
         data_relays.clone(),
-        encrypt,
+        encryption,
     );
 
-    println!("Encryption: {}", if encrypt { "enabled (NIP-44)" } else { "disabled" });
+    println!("Encryption: {}", encryption);
 
     // 6. Publish chunks with progress
     println!("\nUploading {} chunks...", chunks.len());
@@ -133,7 +132,7 @@ pub async fn execute(
 
     for chunk in &chunks {
         // Prepare content: encrypt or base64-encode
-        let content = if encrypt {
+        let content = if encryption == EncryptionAlgorithm::Nip44 {
             crypto::encrypt_chunk(&keys, &chunk.data)?
         } else {
             base64::engine::general_purpose::STANDARD.encode(&chunk.data)
@@ -146,7 +145,7 @@ pub async fn execute(
             chunk_hash: &chunk.hash,
             chunk_data: &chunk.data,
             filename: &file_name,
-            encrypted: encrypt,
+            encryption,
         };
         let event_builder = create_chunk_event(&metadata, &content)?;
 
@@ -191,7 +190,7 @@ pub async fn execute(
         &file_name,
         file_size,
         manifest.created_at,
-        encrypt,
+        encryption,
         verbose,
     )
     .await?;
@@ -224,7 +223,7 @@ async fn publish_to_index_relays(
     file_name: &str,
     file_size: u64,
     uploaded_at: u64,
-    encrypted: bool,
+    encryption: EncryptionAlgorithm,
     verbose: bool,
 ) -> anyhow::Result<String> {
     let client = Client::new(keys.clone());
@@ -289,7 +288,7 @@ async fn publish_to_index_relays(
         file_name: file_name.to_string(),
         file_size,
         uploaded_at,
-        encrypted,
+        encryption,
     };
     index.add_entry(entry);
 

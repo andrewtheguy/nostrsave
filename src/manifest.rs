@@ -1,3 +1,4 @@
+use crate::config::EncryptionAlgorithm;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
@@ -15,8 +16,7 @@ pub struct Manifest {
     pub pubkey: String,
     pub chunks: Vec<ChunkInfo>,
     pub relays: Vec<String>,
-    #[serde(default)]
-    pub encrypted: bool,
+    pub encryption: EncryptionAlgorithm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +34,7 @@ impl Manifest {
         chunk_size: usize,
         pubkey: String,
         relays: Vec<String>,
-        encrypted: bool,
+        encryption: EncryptionAlgorithm,
     ) -> Self {
         let total_chunks = file_size.div_ceil(chunk_size as u64) as usize;
         Self {
@@ -51,7 +51,7 @@ impl Manifest {
             pubkey,
             chunks: Vec::with_capacity(total_chunks),
             relays,
-            encrypted,
+            encryption,
         }
     }
 
@@ -148,7 +148,7 @@ mod tests {
             100,
             "npub1test".to_string(),
             vec!["wss://relay.example.com".to_string()],
-            false,
+            EncryptionAlgorithm::None,
         )
     }
 
