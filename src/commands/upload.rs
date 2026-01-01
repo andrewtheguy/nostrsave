@@ -1,0 +1,140 @@
+use crate::chunking::FileChunker;
+use crate::config::DEFAULT_RELAYS;
+use crate::manifest::Manifest;
+use crate::nostr::create_chunk_event;
+use indicatif::{ProgressBar, ProgressStyle};
+use nostr_sdk::prelude::*;
+use std::path::PathBuf;
+use std::time::Duration;
+
+pub async fn execute(
+    file: PathBuf,
+    chunk_size: usize,
+    output: Option<PathBuf>,
+    private_key: Option<String>,
+    relays: Vec<String>,
+    verbose: bool,
+) -> anyhow::Result<()> {
+    // 1. Setup keys
+    let keys = match private_key {
+        Some(key) => Keys::parse(&key)?,
+        None => {
+            let keys = Keys::generate();
+            println!("Generated new keys:");
+            println!("  Public key:  {}", keys.public_key().to_bech32()?);
+            println!("  Private key: {}", keys.secret_key().to_bech32()?);
+            println!();
+            keys
+        }
+    };
+
+    // 2. Verify file exists
+    if !file.exists() {
+        return Err(anyhow::anyhow!("File not found: {}", file.display()));
+    }
+
+    let file_name = file
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?
+        .to_string_lossy()
+        .to_string();
+    let file_size = std::fs::metadata(&file)?.len();
+
+    println!("File: {} ({} bytes)", file_name, file_size);
+
+    // 3. Split file into chunks
+    println!("Splitting file into chunks...");
+    let chunker = FileChunker::new(chunk_size);
+    let (file_hash, chunks) = chunker.split_file(&file)?;
+
+    println!("File hash: {}", file_hash);
+    println!(
+        "Created {} chunks of up to {} bytes each",
+        chunks.len(),
+        chunk_size
+    );
+
+    // 4. Setup client and connect to relays
+    let relay_list: Vec<String> = if relays.is_empty() {
+        DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
+    } else {
+        relays
+    };
+
+    println!("\nConnecting to {} relays...", relay_list.len());
+
+    let client = Client::new(keys.clone());
+    for relay in &relay_list {
+        if let Err(e) = client.add_relay(relay).await {
+            eprintln!("  Failed to add relay {}: {}", relay, e);
+        } else if verbose {
+            println!("  Added relay: {}", relay);
+        }
+    }
+    client.connect().await;
+
+    // Wait a bit for connections to establish
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 5. Create manifest
+    let mut manifest = Manifest::new(
+        file_name.clone(),
+        file_hash.clone(),
+        file_size,
+        chunk_size,
+        keys.public_key().to_bech32()?,
+        relay_list.clone(),
+    );
+
+    // 6. Publish chunks with progress
+    println!("\nUploading {} chunks...", chunks.len());
+    let pb = ProgressBar::new(chunks.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} chunks ({eta})")?
+            .progress_chars("#>-"),
+    );
+
+    for chunk in &chunks {
+        let event_builder = create_chunk_event(
+            &file_hash,
+            chunk.index,
+            manifest.total_chunks,
+            &chunk.hash,
+            &chunk.data,
+            &file_name,
+        );
+
+        match client.send_event_builder(event_builder).await {
+            Ok(output) => {
+                let event_id = output.val.to_bech32()?;
+                if verbose {
+                    println!("  Chunk {} -> {}", chunk.index, event_id);
+                }
+                manifest.add_chunk(chunk.index, event_id, chunk.hash.clone());
+            }
+            Err(e) => {
+                pb.finish_and_clear();
+                return Err(anyhow::anyhow!("Failed to publish chunk {}: {}", chunk.index, e));
+            }
+        }
+
+        pb.inc(1);
+    }
+
+    pb.finish_with_message("Upload complete!");
+
+    // 7. Save manifest
+    let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
+    manifest.save_to_file(&manifest_path)?;
+
+    println!("\n=== Upload Summary ===");
+    println!("File:     {}", file_name);
+    println!("Size:     {} bytes", file_size);
+    println!("Chunks:   {}", manifest.total_chunks);
+    println!("Hash:     {}", file_hash);
+    println!("Manifest: {}", manifest_path.display());
+    println!("\nUse 'nostrsave download {}' to retrieve the file", manifest_path.display());
+
+    Ok(())
+}
