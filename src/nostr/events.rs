@@ -173,6 +173,17 @@ pub fn create_manifest_filter(file_hash: &str) -> Filter {
 
 /// Parse a manifest event to extract the manifest
 pub fn parse_manifest_event(event: &Event) -> anyhow::Result<Manifest> {
+    use crate::manifest::CURRENT_MANIFEST_VERSION;
+
     let manifest: Manifest = serde_json::from_str(&event.content)?;
+
+    if manifest.version != CURRENT_MANIFEST_VERSION {
+        return Err(anyhow::anyhow!(
+            "Unsupported manifest version: expected {}, got {}",
+            CURRENT_MANIFEST_VERSION,
+            manifest.version
+        ));
+    }
+
     Ok(manifest)
 }

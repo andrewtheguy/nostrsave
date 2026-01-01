@@ -1,5 +1,5 @@
 use crate::chunking::{FileAssembler, FileChunker};
-use crate::config::{get_index_relays, get_private_key, EncryptionAlgorithm};
+use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::manifest::Manifest;
 use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -128,14 +128,20 @@ pub async fn execute(
     output: Option<PathBuf>,
     key_file: Option<&str>,
     show_stats: bool,
+    from_data_relays: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load manifest from file or fetch from relays
     let manifest = if let Some(path) = manifest_path {
         Manifest::load_from_file(&path)?
     } else if let Some(hash) = file_hash {
-        // Use index relays to fetch manifest
-        let relay_list = get_index_relays();
+        // Use index or data relays to fetch manifest based on flag
+        let relay_list = if from_data_relays {
+            println!("Using data relays for manifest lookup...");
+            get_data_relays()?
+        } else {
+            get_index_relays()
+        };
 
         println!("Fetching manifest for hash: {}", hash);
         fetch_manifest_from_relays(&hash, &relay_list, verbose).await?

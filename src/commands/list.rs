@@ -1,10 +1,10 @@
-use crate::config::{get_index_relays, get_private_key};
+use crate::config::{get_data_relays, get_index_relays, get_private_key};
 use crate::nostr::{create_file_index_filter, parse_file_index_event};
 use chrono::{TimeZone, Utc};
 use nostr_sdk::prelude::*;
 use std::time::Duration;
 
-pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool) -> anyhow::Result<()> {
+pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_relays: bool, verbose: bool) -> anyhow::Result<()> {
     // 1. Determine which public key to query
     let target_pubkey = if let Some(pk) = pubkey {
         // User specified a public key
@@ -31,8 +31,13 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
         println!("Querying file index for: {}", target_pubkey.to_bech32()?);
     }
 
-    // 2. Setup client and connect to index relays (defaults if no config)
-    let relay_list = get_index_relays();
+    // 2. Setup client and connect to relays
+    let relay_list = if from_data_relays {
+        println!("Using data relays for file index lookup...");
+        get_data_relays()?
+    } else {
+        get_index_relays()
+    };
 
     println!("Connecting to {} relays...", relay_list.len());
 

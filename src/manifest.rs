@@ -4,6 +4,9 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
+/// Current manifest version
+pub const CURRENT_MANIFEST_VERSION: u8 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub version: u8,
@@ -38,7 +41,7 @@ impl Manifest {
     ) -> Self {
         let total_chunks = file_size.div_ceil(chunk_size as u64) as usize;
         Self {
-            version: 1,
+            version: CURRENT_MANIFEST_VERSION,
             file_name,
             file_hash,
             file_size,
@@ -131,7 +134,17 @@ impl Manifest {
 
     pub fn load_from_file(path: &Path) -> anyhow::Result<Self> {
         let json = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&json)?)
+        let manifest: Self = serde_json::from_str(&json)?;
+
+        if manifest.version != CURRENT_MANIFEST_VERSION {
+            return Err(anyhow::anyhow!(
+                "Unsupported manifest version: expected {}, got {}",
+                CURRENT_MANIFEST_VERSION,
+                manifest.version
+            ));
+        }
+
+        Ok(manifest)
     }
 }
 
@@ -204,5 +217,37 @@ mod tests {
 
         let result = manifest.save_to_file(path);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_rejects_unsupported_version() {
+        use std::io::Write;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("manifest.nostrsave");
+
+        // Create a manifest JSON with an unsupported version
+        let json = r#"{
+            "version": 99,
+            "file_name": "test.bin",
+            "file_hash": "sha256:abc123",
+            "file_size": 1000,
+            "chunk_size": 100,
+            "total_chunks": 10,
+            "created_at": 1234567890,
+            "pubkey": "npub1test",
+            "chunks": [],
+            "relays": ["wss://relay.example.com"],
+            "encryption": "none"
+        }"#;
+
+        let mut file = File::create(&path).unwrap();
+        file.write_all(json.as_bytes()).unwrap();
+        file.flush().unwrap();
+        drop(file);
+
+        let result = Manifest::load_from_file(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported manifest version"));
     }
 }
