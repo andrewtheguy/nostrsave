@@ -140,7 +140,7 @@ pub async fn execute(
             println!("Using data relays for manifest lookup...");
             get_data_relays()?
         } else {
-            get_index_relays()?
+            get_index_relays()
         };
 
         println!("Fetching manifest for hash: {}", hash);

@@ -71,7 +71,7 @@ pub async fn execute(
     }
 
     // 2. Add index relays (from config or defaults)
-    let index_relays = get_index_relays()?;
+    let index_relays = get_index_relays();
     println!("  Added {} index relays", index_relays.len());
     sources.push(format!("index relays ({} relays)", index_relays.len()));
     all_relays.extend(index_relays);

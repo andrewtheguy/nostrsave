@@ -33,11 +33,10 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
 
     // 2. Setup client and connect to relays
     let relay_list = if from_data_relays {
-        let relays = get_data_relays()?;
         println!("Using data relays for file index lookup...");
-        relays
+        get_data_relays()?
     } else {
-        get_index_relays()?
+        get_index_relays()
     };
 
     println!("Connecting to {} relays...", relay_list.len());
