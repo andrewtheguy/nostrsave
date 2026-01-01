@@ -4,6 +4,9 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
+/// Current manifest version
+pub const CURRENT_MANIFEST_VERSION: u8 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub version: u8,
@@ -38,7 +41,7 @@ impl Manifest {
     ) -> Self {
         let total_chunks = file_size.div_ceil(chunk_size as u64) as usize;
         Self {
-            version: 1,
+            version: CURRENT_MANIFEST_VERSION,
             file_name,
             file_hash,
             file_size,
@@ -131,7 +134,17 @@ impl Manifest {
 
     pub fn load_from_file(path: &Path) -> anyhow::Result<Self> {
         let json = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&json)?)
+        let manifest: Self = serde_json::from_str(&json)?;
+
+        if manifest.version != CURRENT_MANIFEST_VERSION {
+            return Err(anyhow::anyhow!(
+                "Unsupported manifest version: expected {}, got {}",
+                CURRENT_MANIFEST_VERSION,
+                manifest.version
+            ));
+        }
+
+        Ok(manifest)
     }
 }
 
