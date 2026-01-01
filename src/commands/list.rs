@@ -118,14 +118,13 @@ pub async fn execute(
         );
     }
 
-    println!("\nDownload with: nostrsave download --hash <hash>");
-
-    if verbose {
-        println!("\nFull hashes:");
-        for entry in &index.entries {
-            println!("  {} -> {}", entry.file_name, entry.file_hash);
-        }
+    // Always show full hashes for easy copying
+    println!("\nHashes:");
+    for (i, entry) in index.entries.iter().enumerate() {
+        println!("  #{}: {}", i + 1, entry.file_hash);
     }
+
+    println!("\nDownload with: nostrsave download --hash <hash>");
 
     Ok(())
 }
