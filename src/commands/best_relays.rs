@@ -9,6 +9,7 @@ struct RelayDiscoveryOutput {
 #[derive(Deserialize)]
 struct RelayResult {
     url: String,
+    round_trip_ms: u64,
 }
 
 pub fn execute(input: PathBuf, count: usize) -> anyhow::Result<()> {
@@ -24,9 +25,11 @@ pub fn execute(input: PathBuf, count: usize) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Take top N relays (already sorted by round-trip time in discovery)
-    let best: Vec<&str> = data
-        .working_relays
+    // Sort by round-trip time and take top N fastest relays
+    let mut relays = data.working_relays;
+    relays.sort_by_key(|r| r.round_trip_ms);
+
+    let best: Vec<&str> = relays
         .iter()
         .take(count)
         .map(|r| r.url.as_str())

@@ -194,12 +194,79 @@ Files are encrypted by default using NIP-44 self-encryption:
 
 ## Relay Discovery
 
-The `discover-relays` command:
+The `discover-relays` command tests relays for file storage capability.
 
-1. Fetches public relay lists from known sources
-2. Tests connectivity to each relay
-3. Performs round-trip test with actual payload size
-4. Outputs JSON with timing and success metrics
+### Relay Sources
+
+1. **nostr.watch API** (`https://api.nostr.watch/v1/online`)
+   - Returns list of currently online relays
+   - Skipped if `--configured-only` flag is used
+
+2. **Index relays** (from config or built-in defaults)
+   - Always included in discovery
+   - Typically more reliable for file index storage
+
+### Reliability Criteria
+
+A relay is considered "working" only if ALL conditions pass:
+
+| Criterion | Description |
+|-----------|-------------|
+| `connected` | WebSocket connection established within timeout |
+| `can_write` | Successfully published a test event with NIP-44 encrypted payload |
+| `can_read` | Successfully fetched the test event back and verified decryption matches |
+
+The test uses the same event kind (30089) and encryption (NIP-44) as actual file uploads.
+
+### Output Fields
+
+```json
+{
+  "working_relays": [
+    {
+      "url": "wss://relay.example.com",
+      "connected": true,
+      "latency_ms": 150,
+      "can_write": true,
+      "can_read": true,
+      "round_trip_ms": 520,
+      "payload_size": 32768
+    }
+  ],
+  "failed_relays": [
+    {
+      "url": "wss://slow.relay.io",
+      "connected": true,
+      "latency_ms": 200,
+      "can_write": true,
+      "can_read": false,
+      "round_trip_ms": 8500,
+      "payload_size": 32768,
+      "error": "Event not found on read"
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `url` | Relay WebSocket URL |
+| `connected` | TCP/WebSocket connection succeeded |
+| `latency_ms` | Time to establish connection |
+| `can_write` | Event publish succeeded |
+| `can_read` | Event fetch and decryption succeeded |
+| `round_trip_ms` | Full write→read cycle time |
+| `payload_size` | Test payload size (matches `--chunk-size`) |
+| `error` | Error message if any test failed |
+
+### Usage with best-relays
+
+The output can be fed to `best-relays` to extract the fastest working relays:
+
+```bash
+nostrsave discover-relays -o relays.json
+nostrsave best-relays relays.json --count 5
+```
 
 ## Security Considerations
 

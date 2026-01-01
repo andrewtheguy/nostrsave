@@ -46,6 +46,9 @@ pub fn create_chunk_event(metadata: &ChunkMetadata, content: &str) -> anyhow::Re
     if metadata.chunk_hash.is_empty() {
         return Err(anyhow::anyhow!("chunk_hash cannot be empty"));
     }
+    if content.trim().is_empty() {
+        return Err(anyhow::anyhow!("content cannot be empty"));
+    }
 
     let d_tag = format!("{}:{}", metadata.file_hash, metadata.chunk_index);
 
