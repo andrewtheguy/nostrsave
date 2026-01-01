@@ -120,15 +120,18 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
         .and_then(|v| v.parse::<EncryptionAlgorithm>().ok())
         .unwrap_or(EncryptionAlgorithm::None);
 
-    let data = if encryption == EncryptionAlgorithm::Nip44 {
-        // Need keys to decrypt
-        let keys = keys.ok_or_else(|| {
-            anyhow::anyhow!("Chunk is encrypted but no keys provided for decryption")
-        })?;
-        crypto::decrypt_chunk(keys, &event.content)?
-    } else {
-        // Plain base64 decode
-        base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?
+    let data = match encryption {
+        EncryptionAlgorithm::Nip44 => {
+            // Need keys to decrypt
+            let keys = keys.ok_or_else(|| {
+                anyhow::anyhow!("Chunk is encrypted but no keys provided for decryption")
+            })?;
+            crypto::decrypt_chunk(keys, &event.content)?
+        }
+        EncryptionAlgorithm::None => {
+            // Plain base64 decode
+            base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?
+        }
     };
 
     Ok(ChunkEventData { index, data })
