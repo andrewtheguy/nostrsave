@@ -268,6 +268,7 @@ pub async fn execute(
 
         // Exit early if we have all chunks
         if all_chunks.len() == manifest.total_chunks {
+            pb.set_position(manifest.total_chunks as u64);
             pb.set_message("complete!");
             break;
         }

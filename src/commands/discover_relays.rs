@@ -162,7 +162,6 @@ pub async fn execute(
     let mut file = File::create(&output)?;
     file.write_all(json.as_bytes())?;
     file.write_all(b"\n")?;
-    file.flush()?;
     file.sync_all()?;
 
     println!("Saved to: {}", output.display());

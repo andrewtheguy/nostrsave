@@ -193,15 +193,12 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     }
 }
 
-/// Generate random hex string
+/// Generate random hex string using cryptographically secure RNG
 fn rand_hex(len: usize) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let hash = Sha256::digest(seed.to_le_bytes());
-    hex::encode(&hash[..len.min(32)])
+    // Use nostr_sdk's key generation which uses a secure RNG
+    let keys = Keys::generate();
+    let secret_bytes = keys.secret_key().as_secret_bytes();
+    hex::encode(&secret_bytes[..len.min(32)])
 }
 
 /// Test multiple relays concurrently with chunk-sized payload
