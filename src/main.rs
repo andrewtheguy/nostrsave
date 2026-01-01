@@ -91,6 +91,9 @@ async fn main() -> anyhow::Result<()> {
             commands::discover_relays::execute(output, configured_only, timeout, concurrent, chunk_size, cli.verbose)
                 .await?;
         }
+        Commands::List { pubkey } => {
+            commands::list::execute(pubkey, private_key, cli.relay, cli.verbose).await?;
+        }
     }
 
     Ok(())

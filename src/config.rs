@@ -15,6 +15,9 @@ pub const CHUNK_EVENT_KIND: u16 = 30078;
 /// Custom event kind for file manifest (parameterized replaceable)
 pub const MANIFEST_EVENT_KIND: u16 = 30079;
 
+/// Custom event kind for file index (parameterized replaceable)
+pub const FILE_INDEX_EVENT_KIND: u16 = 30080;
+
 /// Environment variable for relay list (comma-separated)
 const RELAY_ENV_VAR: &str = "NOSTRSAVE_RELAYS";
 

@@ -1,7 +1,10 @@
 use crate::chunking::FileChunker;
 use crate::config::{get_default_relays, validate_relays};
 use crate::manifest::Manifest;
-use crate::nostr::{create_chunk_event, create_manifest_event, ChunkMetadata};
+use crate::nostr::{
+    create_chunk_event, create_file_index_event, create_file_index_filter, create_manifest_event,
+    parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::path::PathBuf;
@@ -171,7 +174,24 @@ pub async fn execute(
         }
     };
 
-    // 8. Save manifest locally as backup
+    // 8. Update file index
+    println!("Updating file index...");
+    let index_updated = update_file_index(
+        &client,
+        &keys,
+        &file_hash,
+        &file_name,
+        file_size,
+        manifest.created_at,
+        verbose,
+    )
+    .await;
+
+    if !index_updated {
+        eprintln!("  Warning: Failed to update file index (upload still succeeded)");
+    }
+
+    // 9. Save manifest locally as backup
     let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
     manifest.save_to_file(&manifest_path)?;
 
@@ -187,4 +207,84 @@ pub async fn execute(
     println!("  nostrsave download {}", manifest_path.display());
 
     Ok(())
+}
+
+/// Update the file index with a new entry
+async fn update_file_index(
+    client: &Client,
+    keys: &Keys,
+    file_hash: &str,
+    file_name: &str,
+    file_size: u64,
+    uploaded_at: u64,
+    verbose: bool,
+) -> bool {
+    // 1. Try to fetch existing file index
+    let filter = create_file_index_filter(&keys.public_key());
+    let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
+        Ok(events) => {
+            if let Some(event) = events.iter().next() {
+                match parse_file_index_event(event) {
+                    Ok(existing_index) => {
+                        if verbose {
+                            println!("  Found existing index with {} files", existing_index.len());
+                        }
+                        existing_index
+                    }
+                    Err(e) => {
+                        if verbose {
+                            eprintln!("  Failed to parse existing index: {}", e);
+                        }
+                        FileIndex::new()
+                    }
+                }
+            } else {
+                if verbose {
+                    println!("  No existing index found, creating new one");
+                }
+                FileIndex::new()
+            }
+        }
+        Err(e) => {
+            if verbose {
+                eprintln!("  Failed to fetch index: {}", e);
+            }
+            FileIndex::new()
+        }
+    };
+
+    // 2. Add new entry
+    let entry = FileIndexEntry {
+        file_hash: file_hash.to_string(),
+        file_name: file_name.to_string(),
+        file_size,
+        uploaded_at,
+    };
+    index.add_entry(entry);
+
+    // 3. Publish updated index
+    let event_builder = match create_file_index_event(&index) {
+        Ok(builder) => builder,
+        Err(e) => {
+            if verbose {
+                eprintln!("  Failed to create index event: {}", e);
+            }
+            return false;
+        }
+    };
+
+    match client.send_event_builder(event_builder).await {
+        Ok(_) => {
+            if verbose {
+                println!("  Index updated with {} files", index.len());
+            }
+            true
+        }
+        Err(e) => {
+            if verbose {
+                eprintln!("  Failed to publish index: {}", e);
+            }
+            false
+        }
+    }
 }

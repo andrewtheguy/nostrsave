@@ -113,4 +113,11 @@ pub enum Commands {
         #[arg(long, default_value = "65536", value_parser = parse_chunk_size)]
         chunk_size: usize,
     },
+
+    /// List files in your Nostr file index
+    List {
+        /// Public key to list files for (defaults to your key)
+        #[arg(long)]
+        pubkey: Option<String>,
+    },
 }
