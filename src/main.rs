@@ -55,11 +55,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Download {
             manifest,
+            hash,
             output,
             stats,
         } => {
             commands::download::execute(
                 manifest,
+                hash,
                 output,
                 stats,
                 private_key,

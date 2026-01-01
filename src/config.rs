@@ -9,3 +9,6 @@ pub const DEFAULT_RELAYS: &[&str] = &[
 
 /// Custom event kind for file chunks (parameterized replaceable)
 pub const CHUNK_EVENT_KIND: u16 = 30078;
+
+/// Custom event kind for file manifest (parameterized replaceable)
+pub const MANIFEST_EVENT_KIND: u16 = 30079;

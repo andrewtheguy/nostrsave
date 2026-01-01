@@ -1,6 +1,7 @@
 use crate::chunking::{FileAssembler, FileChunker};
+use crate::config::DEFAULT_RELAYS;
 use crate::manifest::Manifest;
-use crate::nostr::{create_chunk_filter, parse_chunk_event};
+use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -65,16 +66,84 @@ impl DownloadStats {
     }
 }
 
+/// Fetch manifest from relays by file hash
+async fn fetch_manifest_from_relays(
+    file_hash: &str,
+    relays: &[String],
+    verbose: bool,
+) -> anyhow::Result<Manifest> {
+    let keys = Keys::generate();
+    let filter = create_manifest_filter(file_hash);
+
+    for relay_url in relays {
+        if verbose {
+            println!("  Trying relay: {}", relay_url);
+        }
+
+        let client = Client::new(keys.clone());
+        if client.add_relay(relay_url).await.is_err() {
+            continue;
+        }
+
+        client.connect().await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        match client.fetch_events(filter.clone(), Duration::from_secs(10)).await {
+            Ok(events) => {
+                if let Some(event) = events.iter().next() {
+                    match parse_manifest_event(event) {
+                        Ok(manifest) => {
+                            client.disconnect().await;
+                            return Ok(manifest);
+                        }
+                        Err(e) => {
+                            if verbose {
+                                eprintln!("    Failed to parse manifest: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("    Fetch error: {}", e);
+                }
+            }
+        }
+
+        client.disconnect().await;
+    }
+
+    Err(anyhow::anyhow!("Manifest not found on any relay"))
+}
+
 pub async fn execute(
-    manifest_path: PathBuf,
+    manifest_path: Option<PathBuf>,
+    file_hash: Option<String>,
     output: Option<PathBuf>,
     show_stats: bool,
     private_key: Option<String>,
     relays: Vec<String>,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // 1. Load manifest
-    let manifest = Manifest::load_from_file(&manifest_path)?;
+    // 1. Load manifest from file or fetch from relays
+    let manifest = if let Some(path) = manifest_path {
+        Manifest::load_from_file(&path)?
+    } else if let Some(hash) = file_hash {
+        // Use provided relays or defaults
+        let relay_list: Vec<String> = if relays.is_empty() {
+            DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
+        } else {
+            relays.clone()
+        };
+
+        println!("Fetching manifest for hash: {}", hash);
+        fetch_manifest_from_relays(&hash, &relay_list, verbose).await?
+    } else {
+        return Err(anyhow::anyhow!(
+            "Either manifest file or --hash is required"
+        ));
+    };
 
     println!("Downloading: {} ({} bytes)", manifest.file_name, manifest.file_size);
     println!("File hash:   {}", manifest.file_hash);

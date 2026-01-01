@@ -1,7 +1,8 @@
 use base64::Engine;
 use nostr_sdk::prelude::*;
 
-use crate::config::CHUNK_EVENT_KIND;
+use crate::config::{CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
+use crate::manifest::Manifest;
 
 /// Data extracted from a chunk event
 #[derive(Debug)]
@@ -79,4 +80,37 @@ pub fn parse_chunk_event(event: &Event) -> anyhow::Result<ChunkEventData> {
     let data = base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?;
 
     Ok(ChunkEventData { index, data })
+}
+
+/// Create a Nostr event for a file manifest
+pub fn create_manifest_event(manifest: &Manifest) -> anyhow::Result<EventBuilder> {
+    let content = serde_json::to_string(manifest)?;
+
+    Ok(EventBuilder::new(Kind::Custom(MANIFEST_EVENT_KIND), content)
+        .tag(Tag::identifier(manifest.file_hash.clone()))
+        .tag(Tag::custom(
+            TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::X)),
+            vec![manifest.file_hash.clone()],
+        ))
+        .tag(Tag::custom(
+            TagKind::custom("filename"),
+            vec![manifest.file_name.clone()],
+        ))
+        .tag(Tag::custom(
+            TagKind::custom("size"),
+            vec![manifest.file_size.to_string()],
+        )))
+}
+
+/// Create a filter to fetch a manifest by file hash
+pub fn create_manifest_filter(file_hash: &str) -> Filter {
+    Filter::new()
+        .kind(Kind::Custom(MANIFEST_EVENT_KIND))
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::X), file_hash.to_string())
+}
+
+/// Parse a manifest event to extract the manifest
+pub fn parse_manifest_event(event: &Event) -> anyhow::Result<Manifest> {
+    let manifest: Manifest = serde_json::from_str(&event.content)?;
+    Ok(manifest)
 }

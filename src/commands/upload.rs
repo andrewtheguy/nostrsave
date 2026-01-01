@@ -1,7 +1,7 @@
 use crate::chunking::FileChunker;
 use crate::config::DEFAULT_RELAYS;
 use crate::manifest::Manifest;
-use crate::nostr::create_chunk_event;
+use crate::nostr::{create_chunk_event, create_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::path::PathBuf;
@@ -117,17 +117,30 @@ pub async fn execute(
 
     pb.finish_with_message("Upload complete!");
 
-    // 7. Save manifest
+    // 7. Publish manifest to relays
+    println!("\nPublishing manifest...");
+    let manifest_event = create_manifest_event(&manifest)?;
+    let manifest_event_id = match client.send_event_builder(manifest_event).await {
+        Ok(output) => output.val.to_bech32()?,
+        Err(e) => {
+            return Err(anyhow::anyhow!("Failed to publish manifest: {}", e));
+        }
+    };
+
+    // 8. Save manifest locally as backup
     let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
     manifest.save_to_file(&manifest_path)?;
 
     println!("\n=== Upload Summary ===");
-    println!("File:     {}", file_name);
-    println!("Size:     {} bytes", file_size);
-    println!("Chunks:   {}", manifest.total_chunks);
-    println!("Hash:     {}", file_hash);
-    println!("Manifest: {}", manifest_path.display());
-    println!("\nUse 'nostrsave download {}' to retrieve the file", manifest_path.display());
+    println!("File:       {}", file_name);
+    println!("Size:       {} bytes", file_size);
+    println!("Chunks:     {}", manifest.total_chunks);
+    println!("Hash:       {}", file_hash);
+    println!("Manifest:   {}", manifest_event_id);
+    println!("Local copy: {}", manifest_path.display());
+    println!("\nDownload with:");
+    println!("  nostrsave download --hash {}", file_hash);
+    println!("  nostrsave download {}", manifest_path.display());
 
     Ok(())
 }

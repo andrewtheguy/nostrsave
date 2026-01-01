@@ -45,9 +45,13 @@ pub enum Commands {
 
     /// Download a file from Nostr relays
     Download {
-        /// Path to manifest file
-        #[arg(value_name = "MANIFEST")]
-        manifest: PathBuf,
+        /// Path to local manifest file
+        #[arg(value_name = "MANIFEST", conflicts_with = "hash")]
+        manifest: Option<PathBuf>,
+
+        /// File hash to fetch manifest from relays (e.g., sha256:abc123...)
+        #[arg(long, conflicts_with = "manifest")]
+        hash: Option<String>,
 
         /// Output file path (defaults to original filename)
         #[arg(short, long)]
