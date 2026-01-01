@@ -32,8 +32,9 @@ async fn main() -> anyhow::Result<()> {
             hash,
             output,
             stats,
+            from_data_relays,
         } => {
-            commands::download::execute(manifest, hash, output, cli.key_file.as_deref(), stats, cli.verbose).await?;
+            commands::download::execute(manifest, hash, output, cli.key_file.as_deref(), stats, from_data_relays, cli.verbose).await?;
         }
         Commands::Keygen => {
             let keys = nostr_sdk::Keys::generate();
@@ -67,8 +68,8 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
-        Commands::List => {
-            commands::list::execute(cli.pubkey.as_deref(), cli.key_file.as_deref(), cli.verbose).await?;
+        Commands::List { from_data_relays } => {
+            commands::list::execute(cli.pubkey.as_deref(), cli.key_file.as_deref(), from_data_relays, cli.verbose).await?;
         }
         Commands::BestRelays { input, count } => {
             commands::best_relays::execute(input, count)?;

@@ -246,6 +246,17 @@ pub async fn execute(
         }
     };
 
+    // 7b. Also publish file index to data relays for redundancy
+    println!("Publishing file index to data relays...");
+    let entry = FileIndexEntry::new(
+        file_hash.clone(),
+        file_name.clone(),
+        file_size,
+        manifest.created_at,
+        encryption,
+    )?;
+    publish_file_index_to_relays(&client, &keys, entry.clone(), verbose).await;
+
     client.disconnect().await;
 
     // 8. Publish manifest and update file index on index relays
@@ -254,11 +265,7 @@ pub async fn execute(
         &keys,
         &index_relays,
         manifest_event,
-        &file_hash,
-        &file_name,
-        file_size,
-        manifest.created_at,
-        encryption,
+        entry,
         verbose,
     )
     .await?;
@@ -282,16 +289,11 @@ pub async fn execute(
 }
 
 /// Publish manifest and update file index on index relays
-#[allow(clippy::too_many_arguments)]
 async fn publish_to_index_relays(
     keys: &Keys,
     index_relays: &[String],
     manifest_event: EventBuilder,
-    file_hash: &str,
-    file_name: &str,
-    file_size: u64,
-    uploaded_at: u64,
-    encryption: EncryptionAlgorithm,
+    entry: FileIndexEntry,
     verbose: bool,
 ) -> anyhow::Result<String> {
     let client = Client::new(keys.clone());
@@ -354,7 +356,21 @@ async fn publish_to_index_relays(
         }
     };
 
-    // 2. Fetch existing file index (select most recent by created_at)
+    // 3. Update file index on index relays
+    publish_file_index_to_relays(&client, keys, entry, verbose).await;
+
+    client.disconnect().await;
+    Ok(manifest_event_id)
+}
+
+/// Publish file index to connected relays (used for both data and index relays)
+async fn publish_file_index_to_relays(
+    client: &Client,
+    keys: &Keys,
+    entry: FileIndexEntry,
+    verbose: bool,
+) {
+    // Fetch existing file index
     let filter = create_file_index_filter(&keys.public_key());
     let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
         Ok(events) => {
@@ -381,25 +397,16 @@ async fn publish_to_index_relays(
             }
         }
         Err(e) => {
-            eprintln!("WARNING: Failed to fetch existing index. Previous entries may be overwritten.");
             if verbose {
-                eprintln!("  Error: {}", e);
+                eprintln!("  Failed to fetch existing index: {}", e);
             }
             FileIndex::new()
         }
     };
 
-    // 3. Add new entry
-    let entry = FileIndexEntry::new(
-        file_hash.to_string(),
-        file_name.to_string(),
-        file_size,
-        uploaded_at,
-        encryption,
-    )?;
+    // Add entry and publish
     index.add_entry(entry);
 
-    // 4. Publish updated index
     match create_file_index_event(&index) {
         Ok(event_builder) => {
             match client.send_event_builder(event_builder).await {
@@ -409,21 +416,16 @@ async fn publish_to_index_relays(
                     }
                 }
                 Err(e) => {
-                    eprintln!("WARNING: Failed to publish file index. File may not appear in 'nostrsave list'.");
                     if verbose {
-                        eprintln!("  Error: {}", e);
+                        eprintln!("  Failed to publish file index: {}", e);
                     }
                 }
             }
         }
         Err(e) => {
-            eprintln!("WARNING: Failed to create file index event; file index not published.");
             if verbose {
-                eprintln!("  Error: {}", e);
+                eprintln!("  Failed to create file index event: {}", e);
             }
         }
     }
-
-    client.disconnect().await;
-    Ok(manifest_event_id)
 }

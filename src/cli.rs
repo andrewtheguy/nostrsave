@@ -92,6 +92,10 @@ pub enum Commands {
         /// Show detailed relay statistics
         #[arg(long)]
         stats: bool,
+
+        /// Fetch manifest from data relays instead of index relays
+        #[arg(long)]
+        from_data_relays: bool,
     },
 
     /// Generate a new Nostr keypair
@@ -124,7 +128,11 @@ pub enum Commands {
     },
 
     /// List files in your Nostr file index
-    List,
+    List {
+        /// Fetch file index from data relays instead of index relays
+        #[arg(long)]
+        from_data_relays: bool,
+    },
 
     /// Print best relays from discovery results in TOML format
     BestRelays {
