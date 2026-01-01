@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use url::Url;
 
 // ============================================================================
 // Encryption Algorithm
@@ -208,36 +209,37 @@ pub fn get_private_key(key_file_override: Option<&str>) -> anyhow::Result<String
 // Relay Resolution
 // ============================================================================
 
-/// Validate a relay URL
-fn validate_relay_url(url: &str) -> Result<String, String> {
-    let url = url.trim();
+/// Validate a relay URL using proper URL parsing
+fn validate_relay_url(input: &str) -> Result<String, String> {
+    let trimmed = input.trim();
 
-    if url.is_empty() {
+    if trimmed.is_empty() {
         return Err("Empty URL".to_string());
     }
 
-    // Must start with wss:// or ws://
-    if !url.starts_with("wss://") && !url.starts_with("ws://") {
-        return Err(format!("Invalid scheme (expected wss:// or ws://): {}", url));
+    // Parse URL using the url crate
+    let parsed = Url::parse(trimmed)
+        .map_err(|e| format!("Invalid URL '{}': {}", trimmed, e))?;
+
+    // Validate scheme is wss or ws
+    let scheme = parsed.scheme();
+    if scheme != "wss" && scheme != "ws" {
+        return Err(format!(
+            "Invalid scheme '{}' (expected 'wss' or 'ws'): {}",
+            scheme, trimmed
+        ));
     }
 
-    // Basic URL structure validation
-    let without_scheme = url
-        .strip_prefix("wss://")
-        .or_else(|| url.strip_prefix("ws://"))
-        .unwrap();
+    // Validate host is present and well-formed
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Missing host".to_string())?;
 
-    if without_scheme.is_empty() {
-        return Err("Missing host".to_string());
+    if host.is_empty() || host.starts_with('.') || host.ends_with('.') {
+        return Err(format!("Invalid host '{}': {}", host, trimmed));
     }
 
-    // Check for valid host characters
-    let host_part = without_scheme.split('/').next().unwrap();
-    if host_part.is_empty() || host_part.starts_with('.') || host_part.ends_with('.') {
-        return Err(format!("Invalid host: {}", url));
-    }
-
-    Ok(url.to_string())
+    Ok(trimmed.to_string())
 }
 
 /// Validate and filter relay URLs
