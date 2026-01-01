@@ -39,16 +39,54 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
     let keys = Keys::generate(); // Just for client, not signing
     let client = Client::new(keys);
 
+    let mut added_count = 0;
     for relay in &relay_list {
-        if let Err(e) = client.add_relay(relay).await {
-            if verbose {
-                eprintln!("  Failed to add relay {}: {}", relay, e);
+        match client.add_relay(relay).await {
+            Ok(_) => added_count += 1,
+            Err(e) => {
+                if verbose {
+                    eprintln!("  Failed to add relay {}: {}", relay, e);
+                }
             }
         }
     }
 
+    if added_count == 0 {
+        return Err(anyhow::anyhow!(
+            "No relays could be added. Check relay URLs in config."
+        ));
+    }
+
     client.connect().await;
     client.wait_for_connection(Duration::from_secs(5)).await;
+
+    // Verify at least one relay is connected
+    let connected_relays: Vec<_> = client
+        .relays()
+        .await
+        .into_iter()
+        .filter(|(_, r)| r.is_connected())
+        .map(|(url, _)| url.to_string())
+        .collect();
+
+    if connected_relays.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No relays connected. Added {} relays but none established connection.\n\
+             Check your network connection or try different relays.",
+            added_count
+        ));
+    }
+
+    if verbose {
+        println!(
+            "Connected to {}/{} relays",
+            connected_relays.len(),
+            added_count
+        );
+        for relay in &connected_relays {
+            println!("  Connected: {}", relay);
+        }
+    }
 
     // 3. Fetch file index
     println!("Fetching file index...\n");

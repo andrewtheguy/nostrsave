@@ -1,6 +1,7 @@
 use crate::crypto;
 use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
+use rand::Rng;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
@@ -103,7 +104,8 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
 
     // Generate test payload with random data
     let test_id = format!("test-{}", rand_hex(16));
-    let test_data: Vec<u8> = (0..chunk_size).map(|i| (i % 256) as u8).collect();
+    let mut test_data = vec![0u8; chunk_size];
+    rand::thread_rng().fill(&mut test_data[..]);
     let test_hash = format!("sha256:{}", hex::encode(Sha256::digest(&test_data)));
 
     // Encrypt test data using NIP-44 (same as actual upload)

@@ -1214,6 +1214,7 @@ dependencies = [
  "hex",
  "indicatif",
  "nostr-sdk",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
