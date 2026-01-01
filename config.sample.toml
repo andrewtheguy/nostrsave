@@ -8,9 +8,9 @@
 # Option 2: Path to file containing private key (supports ~ expansion)
 key_file = "~/.config/nostrsave/nostr.key"
 
-[relays]
-# Relay URLs for uploading and listing files
-# Downloads use the relay list stored in the manifest
+[data_relays]
+# Relays for uploading file chunks (required for upload command)
+# These relays are stored in the manifest for download
 # Run `nostrsave best-relays` after `nostrsave discover-relays` to get optimal list
 urls = [
     "wss://relay.damus.io",
@@ -19,3 +19,13 @@ urls = [
     "wss://relay.primal.net",
     "wss://relay.snort.social"
 ]
+
+# [index_relays]
+# Optional: Relays for storing file index and manifests (used by list command)
+# If not specified, uses default relays:
+#   wss://relay.damus.io, wss://nos.lol, wss://nostr.wine,
+#   wss://relay.primal.net, wss://relay.snort.social
+# urls = [
+#     "wss://relay.damus.io",
+#     "wss://nos.lol"
+# ]

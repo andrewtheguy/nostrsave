@@ -1,5 +1,5 @@
 use crate::chunking::FileChunker;
-use crate::config::{get_default_relays, validate_relays};
+use crate::config::{get_data_relays, get_index_relays, get_private_key};
 use crate::manifest::Manifest;
 use crate::nostr::{
     create_chunk_event, create_file_index_event, create_file_index_filter, create_manifest_event,
@@ -14,15 +14,14 @@ pub async fn execute(
     file: PathBuf,
     chunk_size: usize,
     output: Option<PathBuf>,
-    private_key: Option<String>,
-    relays: Vec<String>,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // 1. Setup keys - require private key
-    let private_key = private_key.ok_or_else(|| {
-        anyhow::anyhow!("Private key required. Use -k <nsec> or --key-file <path>")
-    })?;
+    // 1. Load config - private key and relays
+    let private_key = get_private_key()?;
     let keys = Keys::parse(&private_key)?;
+
+    let data_relays = get_data_relays()?;
+    let index_relays = get_index_relays();
 
     // 2. Verify file exists
     if !file.exists() {
@@ -50,22 +49,12 @@ pub async fn execute(
         chunk_size
     );
 
-    // 4. Setup client and connect to relays
-    let relay_list: Vec<String> = if relays.is_empty() {
-        get_default_relays()
-    } else {
-        validate_relays(&relays)
-    };
-
-    if relay_list.is_empty() {
-        return Err(anyhow::anyhow!("No valid relay URLs provided"));
-    }
-
-    println!("\nConnecting to {} relays...", relay_list.len());
+    // 4. Setup client and connect to data relays
+    println!("\nConnecting to {} data relays...", data_relays.len());
 
     let client = Client::new(keys.clone());
     let mut added_relays = Vec::new();
-    for relay in &relay_list {
+    for relay in &data_relays {
         match client.add_relay(relay).await {
             Ok(_) => {
                 added_relays.push(relay.clone());
@@ -115,14 +104,14 @@ pub async fn execute(
         }
     }
 
-    // 5. Create manifest
+    // 5. Create manifest (store data relays in manifest for download)
     let mut manifest = Manifest::new(
         file_name.clone(),
         file_hash.clone(),
         file_size,
         chunk_size,
         keys.public_key().to_bech32()?,
-        relay_list.clone(),
+        data_relays.clone(),
     );
 
     // 6. Publish chunks with progress
@@ -164,7 +153,7 @@ pub async fn execute(
 
     pb.finish_with_message("Upload complete!");
 
-    // 7. Publish manifest to relays
+    // 7. Publish manifest to data relays
     println!("\nPublishing manifest...");
     let manifest_event = create_manifest_event(&manifest)?;
     let manifest_event_id = match client.send_event_builder(manifest_event).await {
@@ -174,11 +163,11 @@ pub async fn execute(
         }
     };
 
-    // 8. Update file index
+    // 8. Update file index on index relays
     println!("Updating file index...");
     let index_updated = update_file_index(
-        &client,
         &keys,
+        &index_relays,
         &file_hash,
         &file_name,
         file_size,
@@ -190,6 +179,8 @@ pub async fn execute(
     if !index_updated {
         eprintln!("  Warning: Failed to update file index (upload still succeeded)");
     }
+
+    client.disconnect().await;
 
     // 9. Save manifest locally as backup
     let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
@@ -211,14 +202,28 @@ pub async fn execute(
 
 /// Update the file index with a new entry
 async fn update_file_index(
-    client: &Client,
     keys: &Keys,
+    index_relays: &[String],
     file_hash: &str,
     file_name: &str,
     file_size: u64,
     uploaded_at: u64,
     verbose: bool,
 ) -> bool {
+    // Create a new client for index relays
+    let client = Client::new(keys.clone());
+
+    for relay in index_relays {
+        if let Err(e) = client.add_relay(relay).await {
+            if verbose {
+                eprintln!("  Failed to add index relay {}: {}", relay, e);
+            }
+        }
+    }
+
+    client.connect().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     // 1. Try to fetch existing file index
     let filter = create_file_index_filter(&keys.public_key());
     let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
@@ -269,11 +274,12 @@ async fn update_file_index(
             if verbose {
                 eprintln!("  Failed to create index event: {}", e);
             }
+            client.disconnect().await;
             return false;
         }
     };
 
-    match client.send_event_builder(event_builder).await {
+    let result = match client.send_event_builder(event_builder).await {
         Ok(_) => {
             if verbose {
                 println!("  Index updated with {} files", index.len());
@@ -286,5 +292,8 @@ async fn update_file_index(
             }
             false
         }
-    }
+    };
+
+    client.disconnect().await;
+    result
 }

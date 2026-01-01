@@ -1,43 +1,56 @@
-use crate::config::get_default_relays;
+use crate::config::{get_index_relays, load_config};
 use crate::nostr::{create_file_index_filter, parse_file_index_event};
 use chrono::{TimeZone, Utc};
 use nostr_sdk::prelude::*;
 use std::time::Duration;
 
-pub async fn execute(
-    pubkey: Option<String>,
-    private_key: Option<String>,
-    relays: Vec<String>,
-    verbose: bool,
-) -> anyhow::Result<()> {
+pub async fn execute(pubkey: Option<String>, verbose: bool) -> anyhow::Result<()> {
     // 1. Determine which public key to query
     let target_pubkey = if let Some(pk) = pubkey {
         // User specified a public key
         PublicKey::parse(&pk)?
-    } else if let Some(key) = private_key {
-        // Use the user's own public key from their private key
-        let keys = Keys::parse(&key)?;
-        keys.public_key()
     } else {
-        return Err(anyhow::anyhow!(
-            "Either --pubkey or a private key (-k/--key-file) is required to list files"
-        ));
+        // Try to get from config if available
+        if let Some(config) = load_config() {
+            if let Some(identity) = config.identity {
+                let key = if let Some(k) = identity.private_key {
+                    Some(k)
+                } else if let Some(key_path) = identity.key_file {
+                    let path = crate::config::expand_tilde(&key_path);
+                    std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
+                } else {
+                    None
+                };
+
+                if let Some(k) = key {
+                    let keys = Keys::parse(&k)?;
+                    keys.public_key()
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "No --pubkey specified and no identity configured.\n\
+                         Use --pubkey <npub/hex> or configure [identity] in config."
+                    ));
+                }
+            } else {
+                return Err(anyhow::anyhow!(
+                    "No --pubkey specified and no [identity] section in config.\n\
+                     Use --pubkey <npub/hex> or configure [identity] in config."
+                ));
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "No --pubkey specified and no config file found.\n\
+                 Use --pubkey <npub/hex> to specify whose files to list."
+            ));
+        }
     };
 
     if verbose {
         println!("Querying file index for: {}", target_pubkey.to_bech32()?);
     }
 
-    // 2. Setup client and connect to relays
-    let relay_list: Vec<String> = if relays.is_empty() {
-        get_default_relays()
-    } else {
-        relays
-    };
-
-    if relay_list.is_empty() {
-        return Err(anyhow::anyhow!("No relay URLs available"));
-    }
+    // 2. Setup client and connect to index relays (defaults if no config)
+    let relay_list = get_index_relays();
 
     println!("Connecting to {} relays...", relay_list.len());
 

@@ -9,7 +9,8 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
     pub identity: Option<IdentityConfig>,
-    pub relays: Option<RelaysConfig>,
+    pub data_relays: Option<RelaysConfig>,
+    pub index_relays: Option<RelaysConfig>,
 }
 
 /// Identity configuration (private key)
@@ -31,8 +32,8 @@ pub struct RelaysConfig {
 // Constants
 // ============================================================================
 
-/// Fallback relays if none configured (verified working relays)
-const FALLBACK_RELAYS: &[&str] = &[
+/// Default index relays (verified working relays for manifest/index storage)
+const DEFAULT_INDEX_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://nostr.wine",
@@ -49,8 +50,14 @@ pub const MANIFEST_EVENT_KIND: u16 = 30079;
 /// Custom event kind for file index (parameterized replaceable)
 pub const FILE_INDEX_EVENT_KIND: u16 = 30080;
 
-/// Environment variable for relay list (comma-separated)
-const RELAY_ENV_VAR: &str = "NOSTRSAVE_RELAYS";
+// ============================================================================
+// Config Loading
+// ============================================================================
+
+/// Get the default config file path
+pub fn default_config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("nostrsave").join("config.toml"))
+}
 
 /// TOML config file locations to check (in order)
 fn toml_config_paths() -> Vec<PathBuf> {
@@ -69,25 +76,8 @@ fn toml_config_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// Legacy relay config file locations (for backward compatibility)
-fn legacy_relay_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    // ~/.config/nostrsave/relays.txt
-    if let Some(config_dir) = dirs::config_dir() {
-        paths.push(config_dir.join("nostrsave").join("relays.txt"));
-    }
-
-    // ~/.nostrsave/relays.txt
-    if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".nostrsave").join("relays.txt"));
-    }
-
-    paths
-}
-
 /// Expand ~ to home directory in paths
-fn expand_tilde(path: &str) -> PathBuf {
+pub fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
             return home.join(stripped);
@@ -117,16 +107,33 @@ pub fn load_config() -> Option<Config> {
     None
 }
 
-/// Resolve private key from config file
-/// Returns Ok(Some(key)) if found, Ok(None) if not configured, Err on errors
-pub fn resolve_key_from_config() -> anyhow::Result<Option<String>> {
-    let Some(config) = load_config() else {
-        return Ok(None);
-    };
+/// Require config file to exist, returning error with helpful message if not
+pub fn require_config() -> anyhow::Result<Config> {
+    load_config().ok_or_else(|| {
+        let path = default_config_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "~/.config/nostrsave/config.toml".to_string());
+        anyhow::anyhow!(
+            "Config file required but not found.\n\
+             Create config at: {}\n\
+             See config.sample.toml for example.",
+            path
+        )
+    })
+}
 
-    let Some(identity) = config.identity else {
-        return Ok(None);
-    };
+// ============================================================================
+// Identity Resolution
+// ============================================================================
+
+/// Get private key from config
+/// Returns error if config missing or identity not configured
+pub fn get_private_key() -> anyhow::Result<String> {
+    let config = require_config()?;
+
+    let identity = config.identity.ok_or_else(|| {
+        anyhow::anyhow!("Missing [identity] section in config")
+    })?;
 
     // Check for conflicting options
     if identity.private_key.is_some() && identity.key_file.is_some() {
@@ -137,7 +144,7 @@ pub fn resolve_key_from_config() -> anyhow::Result<Option<String>> {
 
     // Inline key
     if let Some(key) = identity.private_key {
-        return Ok(Some(key));
+        return Ok(key);
     }
 
     // Key file with tilde expansion
@@ -150,11 +157,18 @@ pub fn resolve_key_from_config() -> anyhow::Result<Option<String>> {
         if key.is_empty() {
             return Err(anyhow::anyhow!("Key file is empty: {}", path.display()));
         }
-        return Ok(Some(key));
+        return Ok(key);
     }
 
-    Ok(None)
+    Err(anyhow::anyhow!(
+        "Missing private key in [identity] section.\n\
+         Set either 'private_key' or 'key_file'."
+    ))
 }
+
+// ============================================================================
+// Relay Resolution
+// ============================================================================
 
 /// Validate a relay URL
 fn validate_relay_url(url: &str) -> Result<String, String> {
@@ -170,7 +184,8 @@ fn validate_relay_url(url: &str) -> Result<String, String> {
     }
 
     // Basic URL structure validation
-    let without_scheme = url.strip_prefix("wss://")
+    let without_scheme = url
+        .strip_prefix("wss://")
         .or_else(|| url.strip_prefix("ws://"))
         .unwrap();
 
@@ -187,88 +202,56 @@ fn validate_relay_url(url: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-/// Load relays from environment variable
-fn load_from_env() -> Option<Vec<String>> {
-    std::env::var(RELAY_ENV_VAR).ok().map(|val| {
-        val.split(',')
-            .filter_map(|s| validate_relay_url(s).ok())
-            .collect()
-    }).filter(|v: &Vec<String>| !v.is_empty())
+/// Validate and filter relay URLs
+fn validate_relay_list(urls: &[String]) -> Vec<String> {
+    urls.iter()
+        .filter_map(|url| validate_relay_url(url).ok())
+        .collect()
 }
 
-/// Load relays from TOML config
-fn load_relays_from_toml() -> Option<Vec<String>> {
-    let config = load_config()?;
-    let relays_config = config.relays?;
+/// Get data relays from config (required for upload)
+pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
+    let config = require_config()?;
 
-    let relays: Vec<String> = relays_config
-        .urls
-        .iter()
-        .filter_map(|url| validate_relay_url(url).ok())
-        .collect();
+    let data_relays = config.data_relays.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Missing [data_relays] section in config.\n\
+             Add data relays for uploading file chunks."
+        )
+    })?;
+
+    let relays = validate_relay_list(&data_relays.urls);
 
     if relays.is_empty() {
-        None
-    } else {
-        Some(relays)
+        return Err(anyhow::anyhow!(
+            "No valid relay URLs in [data_relays] section"
+        ));
     }
+
+    Ok(relays)
 }
 
-/// Load relays from legacy relays.txt file (backward compatibility)
-fn load_from_legacy_file() -> Option<Vec<String>> {
-    for path in legacy_relay_paths() {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let relays: Vec<String> = content
-                    .lines()
-                    .map(|line| line.split('#').next().unwrap_or("").trim())
-                    .filter(|line| !line.is_empty())
-                    .filter_map(|line| validate_relay_url(line).ok())
-                    .collect();
-
-                if !relays.is_empty() {
-                    return Some(relays);
-                }
+/// Get index relays from config, or fallback to defaults
+/// Used for listing files and storing manifests
+pub fn get_index_relays() -> Vec<String> {
+    // Try to load from config
+    if let Some(config) = load_config() {
+        if let Some(index_relays) = config.index_relays {
+            let relays = validate_relay_list(&index_relays.urls);
+            if !relays.is_empty() {
+                return relays;
             }
         }
     }
-    None
+
+    // Fallback to defaults
+    DEFAULT_INDEX_RELAYS.iter().map(|s| s.to_string()).collect()
 }
 
-/// Get default relays with priority: env var > TOML config > legacy file > fallback
-pub fn get_default_relays() -> Vec<String> {
-    // Priority 1: Environment variable
-    if let Some(relays) = load_from_env() {
-        return relays;
-    }
 
-    // Priority 2: TOML config file
-    if let Some(relays) = load_relays_from_toml() {
-        return relays;
-    }
-
-    // Priority 3: Legacy relays.txt file
-    if let Some(relays) = load_from_legacy_file() {
-        return relays;
-    }
-
-    // Priority 4: Fallback defaults
-    FALLBACK_RELAYS.iter().map(|s| s.to_string()).collect()
-}
-
-/// Validate and filter a list of relay URLs, returning only valid ones
-pub fn validate_relays(relays: &[String]) -> Vec<String> {
-    relays
-        .iter()
-        .filter_map(|url| match validate_relay_url(url) {
-            Ok(valid) => Some(valid),
-            Err(e) => {
-                eprintln!("Warning: Invalid relay URL '{}': {}", url, e);
-                None
-            }
-        })
-        .collect()
-}
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -292,9 +275,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_default_relays_returns_fallback() {
-        // When no env or config, should return fallback
-        let relays = get_default_relays();
+    fn test_get_index_relays_returns_defaults() {
+        // When no config, should return defaults
+        let relays = get_index_relays();
         assert!(!relays.is_empty());
         assert!(relays.iter().all(|r| r.starts_with("wss://")));
     }

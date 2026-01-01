@@ -1,5 +1,5 @@
 use crate::chunking::{FileAssembler, FileChunker};
-use crate::config::{get_default_relays, validate_relays};
+use crate::config::get_index_relays;
 use crate::manifest::Manifest;
 use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -126,24 +126,14 @@ pub async fn execute(
     file_hash: Option<String>,
     output: Option<PathBuf>,
     show_stats: bool,
-    private_key: Option<String>,
-    relays: Vec<String>,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load manifest from file or fetch from relays
     let manifest = if let Some(path) = manifest_path {
         Manifest::load_from_file(&path)?
     } else if let Some(hash) = file_hash {
-        // Use provided relays or defaults
-        let relay_list: Vec<String> = if relays.is_empty() {
-            get_default_relays()
-        } else {
-            validate_relays(&relays)
-        };
-
-        if relay_list.is_empty() {
-            return Err(anyhow::anyhow!("No valid relay URLs provided"));
-        }
+        // Use index relays to fetch manifest
+        let relay_list = get_index_relays();
 
         println!("Fetching manifest for hash: {}", hash);
         fetch_manifest_from_relays(&hash, &relay_list, verbose).await?
@@ -158,24 +148,17 @@ pub async fn execute(
     println!("Chunks:      {}", manifest.total_chunks);
     println!("Chunk size:  {} bytes", manifest.chunk_size);
 
-    // 2. Setup client
-    let keys = match private_key {
-        Some(key) => Keys::parse(&key)?,
-        None => Keys::generate(),
-    };
+    // 2. Setup client (generate random keys for read-only access)
+    let keys = Keys::generate();
 
     // Parse pubkey from manifest
     let author_pubkey = PublicKey::parse(&manifest.pubkey)?;
 
-    // Use relays from manifest, override with CLI if provided
-    let relay_list = if relays.is_empty() {
-        manifest.relays.clone()
-    } else {
-        validate_relays(&relays)
-    };
+    // Use relays from manifest (data relays where chunks are stored)
+    let relay_list = manifest.relays.clone();
 
     if relay_list.is_empty() {
-        return Err(anyhow::anyhow!("No valid relay URLs available"));
+        return Err(anyhow::anyhow!("Manifest contains no relay URLs"));
     }
 
     println!("\nConnecting to {} relays...\n", relay_list.len());
