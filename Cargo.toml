@@ -30,3 +30,6 @@ anyhow = "1.0"
 
 # Progress indication
 indicatif = "0.17"
+
+# Directory paths
+dirs = "6.0"

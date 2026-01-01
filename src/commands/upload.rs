@@ -1,5 +1,5 @@
 use crate::chunking::FileChunker;
-use crate::config::DEFAULT_RELAYS;
+use crate::config::{get_default_relays, validate_relays};
 use crate::manifest::Manifest;
 use crate::nostr::{create_chunk_event, create_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -49,10 +49,14 @@ pub async fn execute(
 
     // 4. Setup client and connect to relays
     let relay_list: Vec<String> = if relays.is_empty() {
-        DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
+        get_default_relays()
     } else {
-        relays
+        validate_relays(&relays)
     };
+
+    if relay_list.is_empty() {
+        return Err(anyhow::anyhow!("No valid relay URLs provided"));
+    }
 
     println!("\nConnecting to {} relays...", relay_list.len());
 

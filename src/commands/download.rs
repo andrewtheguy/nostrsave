@@ -1,5 +1,5 @@
 use crate::chunking::{FileAssembler, FileChunker};
-use crate::config::DEFAULT_RELAYS;
+use crate::config::{get_default_relays, validate_relays};
 use crate::manifest::Manifest;
 use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -136,10 +136,14 @@ pub async fn execute(
     } else if let Some(hash) = file_hash {
         // Use provided relays or defaults
         let relay_list: Vec<String> = if relays.is_empty() {
-            DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
+            get_default_relays()
         } else {
-            relays.clone()
+            validate_relays(&relays)
         };
+
+        if relay_list.is_empty() {
+            return Err(anyhow::anyhow!("No valid relay URLs provided"));
+        }
 
         println!("Fetching manifest for hash: {}", hash);
         fetch_manifest_from_relays(&hash, &relay_list, verbose).await?
@@ -167,8 +171,12 @@ pub async fn execute(
     let relay_list = if relays.is_empty() {
         manifest.relays.clone()
     } else {
-        relays
+        validate_relays(&relays)
     };
+
+    if relay_list.is_empty() {
+        return Err(anyhow::anyhow!("No valid relay URLs available"));
+    }
 
     println!("\nConnecting to {} relays...", relay_list.len());
 
