@@ -1,7 +1,10 @@
 use crate::chunking::{FileAssembler, FileChunker};
 use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::manifest::Manifest;
-use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
+use crate::nostr::{
+    create_chunk_filter, create_chunk_filter_for_indices, create_manifest_filter,
+    parse_chunk_event, parse_manifest_event,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -220,8 +223,6 @@ pub async fn execute(
     // 3. Fetch chunks from each relay individually for stats
     let mut all_chunks: HashMap<usize, Vec<u8>> = HashMap::new();
 
-    let filter = create_chunk_filter(&manifest.file_hash, Some(&author_pubkey));
-
     // Set up progress bar for chunk retrieval
     let pb = ProgressBar::new(manifest.total_chunks as u64);
     pb.set_style(
@@ -233,10 +234,34 @@ pub async fn execute(
     pb.enable_steady_tick(Duration::from_millis(100));
 
     for (relay_idx, relay_url) in relay_list.iter().enumerate() {
+        // Calculate missing chunks at start of each iteration
+        let missing_indices: Vec<usize> = (0..manifest.total_chunks)
+            .filter(|i| !all_chunks.contains_key(i))
+            .collect();
+
+        // Exit early if no missing chunks
+        if missing_indices.is_empty() {
+            pb.set_position(manifest.total_chunks as u64);
+            pb.set_message("complete!");
+            break;
+        }
+
+        // Use targeted filter only when less than half chunks are missing
+        // (avoids very large filters when relay failed or has few chunks)
+        let filter = if missing_indices.len() * 2 < manifest.total_chunks {
+            create_chunk_filter_for_indices(
+                &manifest.file_hash,
+                &missing_indices,
+                Some(&author_pubkey),
+            )
+        } else {
+            create_chunk_filter(&manifest.file_hash, Some(&author_pubkey))
+        };
+
         pb.set_message(format!("relay {}/{}", relay_idx + 1, relay_list.len()));
 
         if verbose {
-            pb.suspend(|| println!("  Fetching from: {}", relay_url));
+            pb.suspend(|| println!("  Fetching from: {} ({} chunks needed)", relay_url, missing_indices.len()));
         }
 
         let client = Client::new(client_keys.clone());
@@ -255,7 +280,7 @@ pub async fn execute(
 
         let start = Instant::now();
 
-        match client.fetch_events(filter.clone(), Duration::from_secs(30)).await {
+        match client.fetch_events(filter, Duration::from_secs(30)).await {
             Ok(events) => {
                 relay_stat.connected = true;
                 relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
@@ -297,13 +322,6 @@ pub async fn execute(
 
         stats.relay_stats.insert(relay_url.clone(), relay_stat);
         client.disconnect().await;
-
-        // Exit early if we have all chunks
-        if all_chunks.len() == manifest.total_chunks {
-            pb.set_position(manifest.total_chunks as u64);
-            pb.set_message("complete!");
-            break;
-        }
     }
 
     pb.finish_and_clear();

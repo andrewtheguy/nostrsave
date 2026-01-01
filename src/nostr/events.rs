@@ -93,6 +93,31 @@ pub fn create_chunk_filter(file_hash: &str, pubkey: Option<&PublicKey>) -> Filte
     filter
 }
 
+/// Create a filter to fetch specific chunks by their indices
+///
+/// Uses `d` tag identifiers (`{file_hash}:{chunk_index}`) for targeted queries.
+/// More efficient than fetching all chunks when only a few are missing.
+pub fn create_chunk_filter_for_indices(
+    file_hash: &str,
+    indices: &[usize],
+    pubkey: Option<&PublicKey>,
+) -> Filter {
+    let identifiers: Vec<String> = indices
+        .iter()
+        .map(|i| format!("{}:{}", file_hash, i))
+        .collect();
+
+    let mut filter = Filter::new()
+        .kind(Kind::Custom(CHUNK_EVENT_KIND))
+        .identifiers(identifiers);
+
+    if let Some(pk) = pubkey {
+        filter = filter.author(*pk);
+    }
+
+    filter
+}
+
 /// Parse a chunk event to extract chunk data
 ///
 /// If keys are provided and the chunk is encrypted, decrypts the content.
