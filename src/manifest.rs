@@ -191,6 +191,7 @@ mod tests {
         let loaded = Manifest::load_from_file(&path).unwrap();
         assert_eq!(loaded.file_name, manifest.file_name);
         assert_eq!(loaded.file_hash, manifest.file_hash);
+        assert_eq!(loaded.encryption, manifest.encryption);
         assert_eq!(loaded.chunks.len(), 1);
         assert_eq!(loaded.chunks[0].index, 0);
     }
