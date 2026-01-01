@@ -146,7 +146,7 @@ pub async fn execute(
     };
 
     // Determine output path early to check for existing file
-    let output_path = output.clone().unwrap_or_else(|| PathBuf::from(&manifest.file_name));
+    let output_path = output.unwrap_or_else(|| PathBuf::from(&manifest.file_name));
 
     // Check if output file already exists
     if output_path.exists() {
