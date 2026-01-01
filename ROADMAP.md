@@ -12,6 +12,11 @@
 - On interruption, resume fetching missing chunks
 - Assemble partial files only when all chunks are available
 
+### Bandwidth-Saving Download
+- Query first relay for all chunks
+- For subsequent relays, only query for missing chunk indices
+- Avoids downloading the same chunk data multiple times
+
 ## Ideas
 
 ### AES-256-GCM Chunk Encryption
@@ -38,3 +43,4 @@ A web page for downloading files without the CLI:
 - Decrypt in browser (if encrypted)
 - Download assembled file
 - Could be hosted on IPFS or as a static site
+
