@@ -8,6 +8,7 @@ use crate::manifest::Manifest;
 #[derive(Debug)]
 pub struct ChunkEventData {
     pub index: usize,
+    pub total_chunks: usize,
     pub data: Vec<u8>,
 }
 
