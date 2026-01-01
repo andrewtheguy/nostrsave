@@ -16,10 +16,12 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
                 let keys = Keys::parse(&private_key)?;
                 keys.public_key()
             }
-            Err(_) => {
+            Err(e) => {
                 return Err(anyhow::anyhow!(
                     "No --pubkey specified and no identity configured.\n\
-                     Use --pubkey <npub/hex> or configure [identity] in config."
+                     Use --pubkey <npub/hex> or configure [identity] in config.\n\
+                     Underlying error: {}",
+                    e
                 ));
             }
         }
@@ -54,7 +56,9 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
 
     let index = match client.fetch_events(filter, Duration::from_secs(10)).await {
         Ok(events) => {
-            if let Some(event) = events.iter().next() {
+            // Select the most recent file index event by created_at timestamp.
+            // Multiple events may exist from different relays or prior uploads.
+            if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
                 parse_file_index_event(event)?
             } else {
                 println!("No file index found for this public key.");
