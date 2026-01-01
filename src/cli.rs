@@ -10,8 +10,12 @@ pub struct Cli {
     pub command: Commands,
 
     /// Private key (hex or nsec). If not provided, generates new keys
-    #[arg(short = 'k', long, global = true)]
+    #[arg(short = 'k', long, global = true, conflicts_with = "key_file")]
     pub private_key: Option<String>,
+
+    /// Path to file containing private key (hex or nsec)
+    #[arg(long, global = true, conflicts_with = "private_key")]
+    pub key_file: Option<PathBuf>,
 
     /// Relay URLs (can be specified multiple times)
     #[arg(short, long, global = true)]
