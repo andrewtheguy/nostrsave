@@ -80,14 +80,15 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
 
     println!("Indexed files ({}):\n", index.len());
     println!(
-        "  {:<3} {:<35} {:>12}  {:<20}  Hash",
-        "#", "Name", "Size", "Uploaded"
+        "  {:<3} {:<35} {:>12}  {:<20}  {:<5}  Hash",
+        "#", "Name", "Size", "Uploaded", "Enc"
     );
-    println!("  {}", "-".repeat(100));
+    println!("  {}", "-".repeat(105));
 
     for (i, entry) in index.entries.iter().enumerate() {
         let size_str = format_size(entry.file_size);
         let date_str = format_timestamp(entry.uploaded_at);
+        let enc_str = if entry.encrypted { "yes" } else { "no" };
         let hash_short = if entry.file_hash.len() > 20 {
             format!("{}...", &entry.file_hash[..20])
         } else {
@@ -102,11 +103,12 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
         };
 
         println!(
-            "  {:<3} {:<35} {:>12}  {:<20}  {}",
+            "  {:<3} {:<35} {:>12}  {:<20}  {:<5}  {}",
             i + 1,
             name,
             size_str,
             date_str,
+            enc_str,
             hash_short
         );
     }

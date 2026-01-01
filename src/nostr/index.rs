@@ -12,6 +12,8 @@ pub struct FileIndexEntry {
     pub file_name: String,
     pub file_size: u64,
     pub uploaded_at: u64,
+    #[serde(default)]
+    pub encrypted: bool,
 }
 
 /// The file index containing all uploaded files for a user
@@ -108,6 +110,7 @@ mod tests {
             file_name: "test.txt".to_string(),
             file_size: 1024,
             uploaded_at: 1234567890,
+            encrypted: true,
         };
 
         index.add_entry(entry);
@@ -123,6 +126,7 @@ mod tests {
             file_name: "test.txt".to_string(),
             file_size: 1024,
             uploaded_at: 1234567890,
+            encrypted: true,
         };
 
         let entry2 = FileIndexEntry {
@@ -130,6 +134,7 @@ mod tests {
             file_name: "test_updated.txt".to_string(),
             file_size: 2048,
             uploaded_at: 1234567900,
+            encrypted: false,
         };
 
         index.add_entry(entry1);

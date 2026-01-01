@@ -191,6 +191,7 @@ pub async fn execute(
         &file_name,
         file_size,
         manifest.created_at,
+        encrypt,
         verbose,
     )
     .await?;
@@ -223,6 +224,7 @@ async fn publish_to_index_relays(
     file_name: &str,
     file_size: u64,
     uploaded_at: u64,
+    encrypted: bool,
     verbose: bool,
 ) -> anyhow::Result<String> {
     let client = Client::new(keys.clone());
@@ -287,6 +289,7 @@ async fn publish_to_index_relays(
         file_name: file_name.to_string(),
         file_size,
         uploaded_at,
+        encrypted,
     };
     index.add_entry(entry);
 
