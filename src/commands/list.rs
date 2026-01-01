@@ -89,15 +89,15 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, verbose: bool
         let size_str = format_size(entry.file_size);
         let date_str = format_timestamp(entry.uploaded_at);
         let enc_str = entry.encryption.to_string();
-        let hash_short = if entry.file_hash.len() > 20 {
-            format!("{}...", &entry.file_hash[..20])
+        let hash_short = if entry.file_hash.chars().count() > 20 {
+            format!("{}...", entry.file_hash.chars().take(20).collect::<String>())
         } else {
             entry.file_hash.clone()
         };
 
         // Truncate filename if too long
-        let name = if entry.file_name.len() > 35 {
-            format!("{}...", &entry.file_name[..32])
+        let name = if entry.file_name.chars().count() > 35 {
+            format!("{}...", entry.file_name.chars().take(32).collect::<String>())
         } else {
             entry.file_name.clone()
         };

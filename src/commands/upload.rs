@@ -246,18 +246,32 @@ async fn publish_to_index_relays(
 ) -> anyhow::Result<String> {
     let client = Client::new(keys.clone());
 
+    // 1. Add index relays and validate at least one succeeds
+    let mut added_count = 0;
     for relay in index_relays {
-        if let Err(e) = client.add_relay(relay).await {
-            if verbose {
-                eprintln!("  Failed to add index relay {}: {}", relay, e);
+        match client.add_relay(relay).await {
+            Ok(_) => {
+                added_count += 1;
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("  Failed to add index relay {}: {}", relay, e);
+                }
             }
         }
+    }
+
+    if added_count == 0 {
+        return Err(anyhow::anyhow!(
+            "No index relays could be added. Tried {} relays.",
+            index_relays.len()
+        ));
     }
 
     client.connect().await;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // 1. Publish manifest to index relays
+    // 2. Publish manifest to index relays
     let manifest_event_id = match client.send_event_builder(manifest_event).await {
         Ok(output) => output.val.to_bech32()?,
         Err(e) => {
@@ -266,11 +280,11 @@ async fn publish_to_index_relays(
         }
     };
 
-    // 2. Fetch existing file index
+    // 2. Fetch existing file index (select most recent by created_at)
     let filter = create_file_index_filter(&keys.public_key());
     let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
         Ok(events) => {
-            if let Some(event) = events.iter().next() {
+            if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
                 match parse_file_index_event(event) {
                     Ok(existing_index) => {
                         if verbose {
