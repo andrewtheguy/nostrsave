@@ -284,19 +284,19 @@ pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
 
 /// Get index relays from config, or fallback to defaults
 /// Used for listing files and storing manifests
-pub fn get_index_relays() -> Vec<String> {
+pub fn get_index_relays() -> anyhow::Result<Vec<String>> {
     // Try to load from config
     if let Some(config) = load_config() {
         if let Some(index_relays) = config.index_relays {
             let relays = validate_relay_list(&index_relays.urls);
             if !relays.is_empty() {
-                return relays;
+                return Ok(relays);
             }
         }
     }
 
     // Fallback to defaults
-    DEFAULT_INDEX_RELAYS.iter().map(|s| s.to_string()).collect()
+    Ok(DEFAULT_INDEX_RELAYS.iter().map(|s| s.to_string()).collect())
 }
 
 // ============================================================================
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn test_get_index_relays_returns_defaults() {
         // When no config, should return defaults
-        let relays = get_index_relays();
+        let relays = get_index_relays().unwrap();
         assert!(!relays.is_empty());
         assert!(relays.iter().all(|r| r.starts_with("wss://")));
     }

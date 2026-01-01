@@ -33,13 +33,7 @@ pub async fn execute(
     let keys = Keys::parse(&private_key)?;
 
     let data_relays = get_data_relays()?;
-    let index_relays = get_index_relays();
-
-    if index_relays.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No index relays configured. Add [index_relays] to config or check relay URLs."
-        ));
-    }
+    let index_relays = get_index_relays()?;
 
     // 2. Verify file exists
     if !file.exists() {

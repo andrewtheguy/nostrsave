@@ -137,10 +137,11 @@ pub async fn execute(
     } else if let Some(hash) = file_hash {
         // Use index or data relays to fetch manifest based on flag
         let relay_list = if from_data_relays {
+            let relays = get_data_relays()?;
             println!("Using data relays for manifest lookup...");
-            get_data_relays()?
+            relays
         } else {
-            get_index_relays()
+            get_index_relays()?
         };
 
         println!("Fetching manifest for hash: {}", hash);
