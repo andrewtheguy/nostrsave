@@ -5,46 +5,68 @@ use crate::config::{CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
 use crate::manifest::Manifest;
 
 /// Data extracted from a chunk event
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChunkEventData {
     pub index: usize,
     pub data: Vec<u8>,
 }
 
-/// Create a Nostr event for a file chunk
-pub fn create_chunk_event(
-    file_hash: &str,
-    chunk_index: usize,
-    total_chunks: usize,
-    chunk_hash: &str,
-    chunk_data: &[u8],
-    filename: &str,
-) -> EventBuilder {
-    let d_tag = format!("{}:{}", file_hash, chunk_index);
-    let encoded_data = base64::engine::general_purpose::STANDARD.encode(chunk_data);
+/// Metadata for creating a chunk event
+#[derive(Debug)]
+pub struct ChunkMetadata<'a> {
+    pub file_hash: &'a str,
+    pub chunk_index: usize,
+    pub total_chunks: usize,
+    pub chunk_hash: &'a str,
+    pub chunk_data: &'a [u8],
+    pub filename: &'a str,
+}
 
-    EventBuilder::new(Kind::Custom(CHUNK_EVENT_KIND), encoded_data)
+/// Create a Nostr event for a file chunk
+pub fn create_chunk_event(metadata: &ChunkMetadata) -> anyhow::Result<EventBuilder> {
+    // Validate inputs
+    if metadata.chunk_index >= metadata.total_chunks {
+        return Err(anyhow::anyhow!(
+            "chunk_index ({}) must be less than total_chunks ({})",
+            metadata.chunk_index,
+            metadata.total_chunks
+        ));
+    }
+    if metadata.chunk_data.is_empty() {
+        return Err(anyhow::anyhow!("chunk_data cannot be empty"));
+    }
+    if metadata.file_hash.is_empty() {
+        return Err(anyhow::anyhow!("file_hash cannot be empty"));
+    }
+    if metadata.chunk_hash.is_empty() {
+        return Err(anyhow::anyhow!("chunk_hash cannot be empty"));
+    }
+
+    let d_tag = format!("{}:{}", metadata.file_hash, metadata.chunk_index);
+    let encoded_data = base64::engine::general_purpose::STANDARD.encode(metadata.chunk_data);
+
+    Ok(EventBuilder::new(Kind::Custom(CHUNK_EVENT_KIND), encoded_data)
         .tag(Tag::identifier(d_tag))
         .tag(Tag::custom(
             TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::X)),
-            vec![file_hash.to_string()],
+            vec![metadata.file_hash.to_string()],
         ))
         .tag(Tag::custom(
             TagKind::custom("chunk"),
-            vec![chunk_index.to_string(), total_chunks.to_string()],
+            vec![metadata.chunk_index.to_string(), metadata.total_chunks.to_string()],
         ))
         .tag(Tag::custom(
             TagKind::custom("hash"),
-            vec![chunk_hash.to_string()],
+            vec![metadata.chunk_hash.to_string()],
         ))
         .tag(Tag::custom(
             TagKind::custom("filename"),
-            vec![filename.to_string()],
+            vec![metadata.filename.to_string()],
         ))
         .tag(Tag::custom(
             TagKind::custom("size"),
-            vec![chunk_data.len().to_string()],
-        ))
+            vec![metadata.chunk_data.len().to_string()],
+        )))
 }
 
 /// Create a filter to fetch all chunks for a file by its hash

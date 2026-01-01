@@ -1,7 +1,7 @@
 use crate::chunking::FileChunker;
 use crate::config::{get_default_relays, validate_relays};
 use crate::manifest::Manifest;
-use crate::nostr::{create_chunk_event, create_manifest_event};
+use crate::nostr::{create_chunk_event, create_manifest_event, ChunkMetadata};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::path::PathBuf;
@@ -132,14 +132,15 @@ pub async fn execute(
     );
 
     for chunk in &chunks {
-        let event_builder = create_chunk_event(
-            &file_hash,
-            chunk.index,
-            manifest.total_chunks,
-            &chunk.hash,
-            &chunk.data,
-            &file_name,
-        );
+        let metadata = ChunkMetadata {
+            file_hash: &file_hash,
+            chunk_index: chunk.index,
+            total_chunks: manifest.total_chunks,
+            chunk_hash: &chunk.hash,
+            chunk_data: &chunk.data,
+            filename: &file_name,
+        };
+        let event_builder = create_chunk_event(&metadata)?;
 
         match client.send_event_builder(event_builder).await {
             Ok(output) => {
