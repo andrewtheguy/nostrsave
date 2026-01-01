@@ -93,8 +93,8 @@ pub enum Commands {
 
     /// Discover and test Nostr relays
     DiscoverRelays {
-        /// Output file for working relays
-        #[arg(short, long, default_value = "working-relays.txt")]
+        /// Output file for relay discovery results (JSON)
+        #[arg(short, long, default_value = "relays.json")]
         output: PathBuf,
 
         /// Only test configured relays, skip public discovery

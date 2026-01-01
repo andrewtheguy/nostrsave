@@ -1,14 +1,16 @@
 use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
+use serde::Serialize;
 use std::time::{Duration, Instant};
 
 /// Result of testing a single relay
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RelayTestResult {
     pub url: String,
     pub connected: bool,
     pub latency_ms: Option<u64>,
     pub can_fetch: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
