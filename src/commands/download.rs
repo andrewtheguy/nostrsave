@@ -198,6 +198,7 @@ pub async fn execute(
             .progress_chars("█▓░"),
     );
     pb.set_message("starting...");
+    pb.enable_steady_tick(Duration::from_millis(100));
 
     for (relay_idx, relay_url) in relay_list.iter().enumerate() {
         pb.set_message(format!("relay {}/{}", relay_idx + 1, relay_list.len()));
@@ -272,8 +273,8 @@ pub async fn execute(
         }
     }
 
-    pb.finish_with_message("done");
-    println!("Retrieved {}/{} chunks", all_chunks.len(), manifest.total_chunks);
+    pb.finish_and_clear();
+    println!("Retrieved {}/{} chunks\n", all_chunks.len(), manifest.total_chunks);
 
     // 4. Check for missing chunks
     let missing: Vec<usize> = (0..manifest.total_chunks)
