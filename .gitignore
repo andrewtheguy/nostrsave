@@ -1,4 +1,5 @@
 /target
 *.nostrsave
-config.sample.toml
+/target
+*.nostrsave
 relays.json
