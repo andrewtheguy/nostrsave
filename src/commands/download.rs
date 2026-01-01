@@ -1,13 +1,22 @@
 use crate::chunking::{FileAssembler, FileChunker};
 use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::manifest::Manifest;
-use crate::nostr::{create_chunk_filter, create_manifest_filter, parse_chunk_event, parse_manifest_event};
+use crate::nostr::{
+    create_chunk_filter, create_chunk_filter_for_indices, create_manifest_filter,
+    parse_chunk_event, parse_manifest_event,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+/// Threshold ratio for switching to targeted chunk filters.
+/// When missing chunks are less than 1/N of total chunks, use targeted filters
+/// (querying specific chunk identifiers) instead of a full filter (querying all chunks).
+/// Value of 2 means: use targeted filter when less than 50% of chunks are missing.
+const TARGETED_FILTER_THRESHOLD_DIVISOR: usize = 2;
 
 /// Statistics for a single relay
 #[derive(Debug, Default)]
@@ -220,8 +229,6 @@ pub async fn execute(
     // 3. Fetch chunks from each relay individually for stats
     let mut all_chunks: HashMap<usize, Vec<u8>> = HashMap::new();
 
-    let filter = create_chunk_filter(&manifest.file_hash, Some(&author_pubkey));
-
     // Set up progress bar for chunk retrieval
     let pb = ProgressBar::new(manifest.total_chunks as u64);
     pb.set_style(
@@ -233,10 +240,42 @@ pub async fn execute(
     pb.enable_steady_tick(Duration::from_millis(100));
 
     for (relay_idx, relay_url) in relay_list.iter().enumerate() {
+        // Calculate missing chunks at start of each iteration
+        let missing_indices: Vec<usize> = (0..manifest.total_chunks)
+            .filter(|i| !all_chunks.contains_key(i))
+            .collect();
+
+        // Exit early if no missing chunks
+        if missing_indices.is_empty() {
+            pb.set_position(manifest.total_chunks as u64);
+            pb.set_message("complete!");
+            break;
+        }
+
+        // Use targeted filters when few chunks remain missing (efficient, small filter).
+        // Use full filter when many chunks are missing (e.g., after relay failure) to avoid
+        // creating extremely large targeted filters with hundreds of identifiers.
+        let use_targeted = missing_indices.len() * TARGETED_FILTER_THRESHOLD_DIVISOR < manifest.total_chunks;
+        let filters: Vec<Filter> = if use_targeted {
+            create_chunk_filter_for_indices(
+                &manifest.file_hash,
+                &missing_indices,
+                Some(&author_pubkey),
+            )?
+        } else {
+            vec![create_chunk_filter(&manifest.file_hash, Some(&author_pubkey))]
+        };
+
         pb.set_message(format!("relay {}/{}", relay_idx + 1, relay_list.len()));
 
         if verbose {
-            pb.suspend(|| println!("  Fetching from: {}", relay_url));
+            pb.suspend(|| println!(
+                "  Fetching from: {} ({} chunks needed, {} filter batch{})",
+                relay_url,
+                missing_indices.len(),
+                filters.len(),
+                if filters.len() == 1 { "" } else { "es" }
+            ));
         }
 
         let client = Client::new(client_keys.clone());
@@ -255,55 +294,51 @@ pub async fn execute(
 
         let start = Instant::now();
 
-        match client.fetch_events(filter.clone(), Duration::from_secs(30)).await {
-            Ok(events) => {
-                relay_stat.connected = true;
-                relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
+        // Fetch events for each filter batch
+        for filter in filters {
+            match client.fetch_events(filter, Duration::from_secs(30)).await {
+                Ok(events) => {
+                    relay_stat.connected = true;
 
-                for event in events.iter() {
-                    match parse_chunk_event(event, decrypt_keys.as_ref()) {
-                        Ok(chunk_data) => {
-                            relay_stat.chunks_found.insert(chunk_data.index);
+                    for event in events.iter() {
+                        match parse_chunk_event(event, decrypt_keys.as_ref()) {
+                            Ok(chunk_data) => {
+                                relay_stat.chunks_found.insert(chunk_data.index);
 
-                            // Only store if we don't have this chunk yet
-                            if let std::collections::hash_map::Entry::Vacant(e) = all_chunks.entry(chunk_data.index) {
-                                e.insert(chunk_data.data);
-                                pb.set_position(all_chunks.len() as u64);
+                                // Only store if we don't have this chunk yet
+                                if let std::collections::hash_map::Entry::Vacant(e) = all_chunks.entry(chunk_data.index) {
+                                    e.insert(chunk_data.data);
+                                    pb.set_position(all_chunks.len() as u64);
+                                }
                             }
-                        }
-                        Err(e) => {
-                            if verbose {
-                                pb.suspend(|| eprintln!("    Failed to parse event: {}", e));
+                            Err(e) => {
+                                if verbose {
+                                    pb.suspend(|| eprintln!("    Failed to parse event: {}", e));
+                                }
                             }
                         }
                     }
                 }
+                Err(e) => {
+                    if verbose {
+                        pb.suspend(|| eprintln!("    Fetch error: {}", e));
+                    }
+                }
+            }
+        }
 
-                if verbose {
-                    pb.suspend(|| println!(
-                        "    Found {} chunks in {}ms",
-                        relay_stat.chunks_found.len(),
-                        relay_stat.fetch_time_ms
-                    ));
-                }
-            }
-            Err(e) => {
-                relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
-                if verbose {
-                    pb.suspend(|| eprintln!("    Fetch error: {}", e));
-                }
-            }
+        relay_stat.fetch_time_ms = start.elapsed().as_millis() as u64;
+
+        if verbose {
+            pb.suspend(|| println!(
+                "    Found {} chunks in {}ms",
+                relay_stat.chunks_found.len(),
+                relay_stat.fetch_time_ms
+            ));
         }
 
         stats.relay_stats.insert(relay_url.clone(), relay_stat);
         client.disconnect().await;
-
-        // Exit early if we have all chunks
-        if all_chunks.len() == manifest.total_chunks {
-            pb.set_position(manifest.total_chunks as u64);
-            pb.set_message("complete!");
-            break;
-        }
     }
 
     pb.finish_and_clear();
