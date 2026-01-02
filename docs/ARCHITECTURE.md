@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-    A[Read File] --> B[Compute Hash<br/>SHA-512]
+    A[Read File] --> B[Compute Session Hash<br/>SHA-512]
     B --> C[Create/Resume<br/>Upload Session]
     C --> D[Split into<br/>Chunks]
     D --> E[Encrypt<br/>NIP-44]
@@ -31,24 +31,26 @@ flowchart LR
 
 The download session stores received chunks in SQLite. If interrupted, re-running the command only fetches missing chunks. File assembly happens atomically after all chunks are collected.
 
-### List Flow
+### List Flow (Paged Index)
 
 ```mermaid
 flowchart LR
     A[Determine<br/>Target Pubkey] --> B[Connect to<br/>Index Relays]
-    B --> C[Fetch File Index<br/>Kind 30080]
+    B --> C[Fetch Current Index<br/>Kind 30080]
     C --> D{Index<br/>Found?}
-    D -->|Yes| E[Select Most Recent<br/>by created_at]
+    D -->|Yes| E[If page > 1,<br/>fetch archive]
     D -->|No| F[Display<br/>Empty Message]
-    E --> G[Parse & Display<br/>File Entries]
+    E --> G[Select Most Recent<br/>by created_at]
+    G --> H[Parse & Display<br/>File Entries]
 ```
 
-The file index is a single replaceable event (Kind 30080) that contains metadata for all uploaded files. When listing:
+The file index is **paged** across multiple replaceable events (Kind 30080). Page 1 is the *current* index, and older pages are stored as *archives* with identifiers `nostrsave-index-archive-<n>`. When listing:
 
 1. **Target pubkey:** Uses your own pubkey by default, or `--pubkey` to view another user's files
-2. **Relay selection:** Queries index relays (not data relays) where manifests are published
+2. **Relay selection:** Queries index relays (not data relays) where indexes are published
 3. **Event selection:** If multiple index events exist, the most recent by `created_at` is used
 4. **Read-only for others:** You can list any user's files, but only download encrypted files if you have the private key
+5. **Paging:** Page 1 reads the current index (`nostrsave-index`). Page N>1 maps to archive `nostrsave-index-archive-<n>`.
 
 ## Nostr Event Structure
 
@@ -103,21 +105,22 @@ Tags:
 }
 ```
 
-### File Index Event (Kind 30080)
+### File Index Event (Kind 30080, paged)
 
-Parameterized replaceable event listing all user's files.
+Parameterized replaceable events listing a user's files across pages.
 
 ```
 Kind: 30080
 Content: <JSON file index>
 Tags:
-  - ["d", "nostrsave-index"]               # Fixed identifier
+  - ["d", "nostrsave-index"]               # Current index (page 1)
+  - ["d", "nostrsave-index-archive-<n>"]   # Archive pages (n >= 1)
 ```
 
 **Index JSON:**
 ```json
 {
-  "version": 1,
+  "version": 2,
   "entries": [
     {
       "file_hash": "sha256:abc123...",
@@ -127,9 +130,16 @@ Tags:
       "encryption": "nip44"
     },
     ...
-  ]
+  ],
+  "archive_number": 0,
+  "total_archives": 2
 }
 ```
+
+**Notes:**
+- `archive_number` is `0` for the current index (page 1). Archives start at `1`.
+- `total_archives` is the total number of archive pages (not counting the current index).
+- No backward compatibility: only version `2` indexes are supported.
 
 ## Configuration Loading
 
@@ -152,9 +162,9 @@ flowchart TB
 
 1. **Relay limits:** Most relays have event size limits
 2. **NIP-44 limits:** Protocol allows up to 65535 bytes, but 65408 is the tested limit that works reliably with relays
-3. **Parallel fetching:** Chunks can be fetched concurrently
-4. **Resumability:** Failed uploads/downloads can resume
-5. **Deduplication:** Identical chunks share the same hash
+3. **Resumability:** Failed uploads/downloads can resume
+4. **Deduplication:** Identical chunks share the same hash
+5. **Streaming-friendly:** Chunks are processed as events arrive per relay (sequential across relays)
 
 ## Encryption (NIP-44)
 
@@ -250,7 +260,7 @@ nostrsave best-relays relays.json --count 5
 - Private keys are never stored in manifests
 - Key files support tilde expansion for home directory
 - Config file can reference external key files
-- Chunk hashes verified on download (against original unencrypted data)
+- Chunk hashes recomputed on download and stored in the session (final integrity check is the file hash after reassembly)
 - File hash verified after reassembly
 
 ## Session Management

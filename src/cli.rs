@@ -137,7 +137,7 @@ pub enum Commands {
         #[arg(long)]
         from_data_relays: bool,
 
-        /// Page number (1 = most recent, higher = older files)
+        /// Page number (1 = current index; higher pages map to archives)
         #[arg(long, default_value = "1")]
         page: u32,
     },
