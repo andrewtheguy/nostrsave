@@ -87,17 +87,17 @@ impl DownloadSession {
     pub fn create(meta: DownloadMeta) -> anyhow::Result<Self> {
         let db_path = session_db_path(DOWNLOAD_PREFIX, &meta.file_hash_full)?;
 
-        // Delete any existing session (both db and lock file)
+        // Acquire lock FIRST to prevent race with other processes.
+        // This creates the .db.lock file and holds exclusive access.
+        let lock = acquire_session_lock(&db_path)?;
+
+        // Now safe to delete any existing DB under the held lock
         if db_path.exists() {
             std::fs::remove_file(&db_path)?;
         }
-        remove_session_lock(&db_path)?;
 
-        // Create DB file
+        // Create and open DB file while holding the lock
         let conn = Connection::open(&db_path)?;
-
-        // Acquire file lock
-        let lock = acquire_session_lock(&db_path)?;
 
         // Create tables
         conn.execute_batch(
@@ -241,10 +241,21 @@ impl DownloadSession {
     }
 
     /// Delete a download session without opening it.
+    /// Acquires the session lock first to ensure no other process is using it.
     pub fn delete(file_hash_full: &str) -> anyhow::Result<()> {
         let db_path = session_db_path(DOWNLOAD_PREFIX, file_hash_full)?;
+
+        // Acquire lock to ensure no other process is using this session.
+        // If another process holds the lock, this will fail immediately.
+        let lock = acquire_session_lock(&db_path)?;
+
+        // Delete the DB while holding the lock
         delete_session_db(DOWNLOAD_PREFIX, file_hash_full)?;
+
+        // Release lock (drop) and remove lock file
+        drop(lock);
         remove_session_lock(&db_path)?;
+
         Ok(())
     }
 }
