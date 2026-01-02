@@ -4,41 +4,29 @@
 
 ### Upload Flow
 
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│  Read File  │────▶│ Compute Hash │────▶│ Create/Resume   │
-│             │     │ (SHA-512)    │     │ Upload Session  │
-└─────────────┘     └──────────────┘     └─────────────────┘
-                                                  │
-                                                  ▼
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Split into  │────▶│ Encrypt      │────▶│ Publish Chunk   │
-│ Chunks      │     │ (NIP-44)     │     │ (skip if done)  │
-└─────────────┘     └──────────────┘     └─────────────────┘
-                                                  │
-                                                  ▼
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Cleanup     │◀────│ Update File  │◀────│ Publish         │
-│ Session     │     │ Index        │     │ Manifest        │
-└─────────────┘     └──────────────┘     └─────────────────┘
+```mermaid
+flowchart LR
+    A[Read File] --> B[Compute Hash<br/>SHA-512]
+    B --> C[Create/Resume<br/>Upload Session]
+    C --> D[Split into<br/>Chunks]
+    D --> E[Encrypt<br/>NIP-44]
+    E --> F[Publish Chunk<br/>skip if done]
+    F --> G[Publish<br/>Manifest]
+    G --> H[Update File<br/>Index]
+    H --> I[Cleanup<br/>Session]
 ```
 
 The upload session tracks which chunks have been successfully published. If interrupted, re-running the command skips already-published chunks.
 
 ### Download Flow
 
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Load/Fetch  │────▶│ Create/Resume│────▶│ Query Missing   │
-│ Manifest    │     │ Download     │     │ Chunks from     │
-│             │     │ Session      │     │ Relays          │
-└─────────────┘     └──────────────┘     └─────────────────┘
-                                                  │
-                                                  ▼
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Cleanup     │◀────│ Write File   │◀────│ Decrypt, Verify │
-│ Session     │     │ (atomic)     │     │ & Store Chunks  │
-└─────────────┘     └──────────────┘     └─────────────────┘
+```mermaid
+flowchart LR
+    A[Load/Fetch<br/>Manifest] --> B[Create/Resume<br/>Download Session]
+    B --> C[Query Missing<br/>Chunks from Relays]
+    C --> D[Decrypt, Verify<br/>& Store Chunks]
+    D --> E[Write File<br/>atomic]
+    E --> F[Cleanup<br/>Session]
 ```
 
 The download session stores received chunks in SQLite. If interrupted, re-running the command only fetches missing chunks. File assembly happens atomically after all chunks are collected.
@@ -126,20 +114,11 @@ Tags:
 
 ## Configuration Loading
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Priority Order                        │
-├─────────────────────────────────────────────────────────┤
-│ 1. CLI flags (--key-file, --encryption)                 │
-│    ↓                                                     │
-│ 2. TOML config (~/.config/nostrsave/config.toml)        │
-│    - [identity] private_key or key_file                 │
-│    - [data_relays] for chunk storage                    │
-│    - [index_relays] for manifest/index discovery        │
-│    - [encryption] algorithm (nip44 or none)             │
-│    ↓                                                     │
-│ 3. Built-in defaults (nip44, fallback relays)           │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    A["1. CLI flags<br/>(--key-file, --encryption)"] --> B
+    B["2. TOML config<br/>(~/.config/nostrsave/config.toml)<br/>[identity] [data_relays] [index_relays] [encryption]"] --> C
+    C["3. Built-in defaults<br/>(nip44, fallback relays)"]
 ```
 
 ## Chunking Strategy
@@ -333,16 +312,13 @@ Sessions use OS-level advisory file locks via the `fs2` crate:
 3. **Lock lifetime:** Held for duration of session object
 4. **Ordering:** Lock acquired before any database operations
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                  Session Lifecycle                       │
-├─────────────────────────────────────────────────────────┤
-│ 1. Acquire exclusive lock on .db.lock file              │
-│ 2. Open/create SQLite database                          │
-│ 3. Perform operations (track chunks)                    │
-│ 4. On success: delete DB, release lock, delete lockfile │
-│ 5. On failure: release lock (DB persists for resume)    │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    A[Acquire exclusive lock<br/>on .db.lock file] --> B[Open/create<br/>SQLite database]
+    B --> C[Perform operations<br/>track chunks]
+    C --> D{Success?}
+    D -->|Yes| E[Delete DB,<br/>release lock,<br/>delete lockfile]
+    D -->|No| F[Release lock<br/>DB persists for resume]
 ```
 
 ### Error Handling
