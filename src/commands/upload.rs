@@ -111,10 +111,12 @@ pub async fn execute(
         }
     }
 
+    // Non-UTF-8 file names are rejected
     let file_name = file
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?
-        .to_string_lossy()
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("File name contains invalid UTF-8"))?
         .to_string();
     let file_size = std::fs::metadata(&file)?.len();
 

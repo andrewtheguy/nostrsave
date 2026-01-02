@@ -129,12 +129,19 @@ impl UploadSession {
 
         let relays_json = serde_json::to_string(&meta.relays)?;
 
+        // Non-UTF-8 paths are rejected; lossy conversion could corrupt the stored path
+        let file_path_str = meta
+            .file_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("File path contains invalid UTF-8"))?
+            .to_string();
+
         conn.execute(
             "INSERT INTO session_meta (id, schema_version, file_path, file_hash, file_hash_full, file_size, chunk_size, total_chunks, pubkey, encryption, relays, created_at)
              VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 SCHEMA_VERSION,
-                meta.file_path.to_string_lossy().to_string(),
+                file_path_str,
                 meta.file_hash,
                 meta.file_hash_full,
                 meta.file_size as i64,

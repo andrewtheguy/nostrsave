@@ -129,6 +129,13 @@ impl DownloadSession {
 
         let manifest_json = serde_json::to_string(&meta.manifest)?;
 
+        // Non-UTF-8 paths are rejected; lossy conversion could corrupt the stored path
+        let output_path_str = meta
+            .output_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Output path contains invalid UTF-8"))?
+            .to_string();
+
         conn.execute(
             "INSERT INTO session_meta (id, schema_version, file_hash, file_hash_full, file_name, file_size, total_chunks, encryption, manifest_json, output_path, created_at)
              VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -141,7 +148,7 @@ impl DownloadSession {
                 meta.total_chunks as i64,
                 meta.encryption.to_string(),
                 manifest_json,
-                meta.output_path.to_string_lossy().to_string(),
+                output_path_str,
                 now as i64,
             ],
         )?;
