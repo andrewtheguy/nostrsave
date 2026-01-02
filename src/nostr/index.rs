@@ -222,18 +222,36 @@ impl FileIndex {
         }
     }
 
-    /// Create an archive with existing entries
+    /// Create an archive with existing entries.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - `archive_number` is 0 (archives start at 1)
+    /// - `archive_number` > `total_archives`
     pub fn new_archive_with_entries(
         entries: Vec<FileIndexEntry>,
         archive_number: u32,
         total_archives: u32,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        if archive_number == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid archive_number: must be >= 1 (got 0)"
+            ));
+        }
+        if archive_number > total_archives {
+            return Err(anyhow::anyhow!(
+                "Invalid archive_number: {} exceeds total_archives {}",
+                archive_number,
+                total_archives
+            ));
+        }
+
+        Ok(Self {
             version: CURRENT_FILE_INDEX_VERSION,
             entries,
             archive_number,
             total_archives,
-        }
+        })
     }
 
     /// Add an entry, replacing any existing entry with the same file_hash
@@ -423,10 +441,10 @@ mod tests {
         assert_eq!(index.get_identifier(), "nostrsave-index");
 
         // Archives
-        let archive1 = FileIndex::new_archive_with_entries(vec![], 1, 3);
+        let archive1 = FileIndex::new_archive_with_entries(vec![], 1, 3).unwrap();
         assert_eq!(archive1.get_identifier(), "nostrsave-index-archive-1");
 
-        let archive3 = FileIndex::new_archive_with_entries(vec![], 3, 3);
+        let archive3 = FileIndex::new_archive_with_entries(vec![], 3, 3).unwrap();
         assert_eq!(archive3.get_identifier(), "nostrsave-index-archive-3");
     }
 
@@ -442,14 +460,29 @@ mod tests {
         assert_eq!(current.page(), 1);
         assert_eq!(current.total_pages(), 4);
 
-        let archive3 = FileIndex::new_archive_with_entries(vec![], 3, 3);
+        let archive3 = FileIndex::new_archive_with_entries(vec![], 3, 3).unwrap();
         assert_eq!(archive3.page(), 2);
 
-        let archive2 = FileIndex::new_archive_with_entries(vec![], 2, 3);
+        let archive2 = FileIndex::new_archive_with_entries(vec![], 2, 3).unwrap();
         assert_eq!(archive2.page(), 3);
 
-        let archive1 = FileIndex::new_archive_with_entries(vec![], 1, 3);
+        let archive1 = FileIndex::new_archive_with_entries(vec![], 1, 3).unwrap();
         assert_eq!(archive1.page(), 4);
+    }
+
+    #[test]
+    fn test_new_archive_with_entries_validation() {
+        // Valid cases
+        assert!(FileIndex::new_archive_with_entries(vec![], 1, 1).is_ok());
+        assert!(FileIndex::new_archive_with_entries(vec![], 1, 3).is_ok());
+        assert!(FileIndex::new_archive_with_entries(vec![], 3, 3).is_ok());
+
+        // Invalid: archive_number == 0
+        assert!(FileIndex::new_archive_with_entries(vec![], 0, 3).is_err());
+
+        // Invalid: archive_number > total_archives
+        assert!(FileIndex::new_archive_with_entries(vec![], 4, 3).is_err());
+        assert!(FileIndex::new_archive_with_entries(vec![], 2, 1).is_err());
     }
 
     #[test]

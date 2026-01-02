@@ -678,7 +678,7 @@ async fn publish_file_index_to_relays(
     old_entries.sort_by_key(|e| e.uploaded_at());
 
     // Create archive with old entries
-    let archive = FileIndex::new_archive_with_entries(old_entries, new_archive_number, new_total_archives);
+    let archive = FileIndex::new_archive_with_entries(old_entries, new_archive_number, new_total_archives)?;
 
     // Create fresh current index with just the new entry
     let new_current = FileIndex::new_with_entries(vec![entry], new_total_archives);
