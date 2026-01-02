@@ -184,8 +184,7 @@ impl UploadSession {
                 let idx: i64 = row.get(0)?;
                 Ok(idx as usize)
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<std::collections::HashSet<usize>, _>>()?;
 
         let unpublished: Vec<usize> = (0..self.total_chunks)
             .filter(|i| !published.contains(i))
@@ -217,8 +216,7 @@ impl UploadSession {
                 let hash: String = row.get(2)?;
                 Ok((idx as usize, event_id, hash))
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<(usize, String, String)>, _>>()?;
 
         Ok(chunks)
     }

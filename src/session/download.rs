@@ -178,8 +178,7 @@ impl DownloadSession {
                 let idx: i64 = row.get(0)?;
                 Ok(idx as usize)
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<std::collections::HashSet<usize>, _>>()?;
 
         let missing: Vec<usize> = (0..self.total_chunks)
             .filter(|i| !downloaded.contains(i))
@@ -210,8 +209,7 @@ impl DownloadSession {
                 let data: Vec<u8> = row.get(1)?;
                 Ok((idx as usize, data))
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<HashMap<usize, Vec<u8>>, _>>()?;
 
         Ok(chunks)
     }
