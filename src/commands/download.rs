@@ -9,6 +9,7 @@ use crate::session::{compute_hash_sha512, DownloadMeta, DownloadSession};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
 use sha2::{Digest, Sha256};
+use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -359,12 +360,12 @@ pub async fn execute(
 
         // Fetch events for each filter batch
         for filter in filters {
-            match client.fetch_events(filter, Duration::from_secs(30)).await {
-                Ok(events) => {
+            match client.stream_events(filter, Duration::from_secs(30)).await {
+                Ok(mut stream) => {
                     relay_stat.connected = true;
 
-                    for event in events.iter() {
-                        match parse_chunk_event(event, decrypt_keys.as_ref()) {
+                    while let Some(event) = stream.next().await {
+                        match parse_chunk_event(&event, decrypt_keys.as_ref()) {
                             Ok(chunk_data) => {
                                 relay_stat.chunks_found.insert(chunk_data.index);
 
