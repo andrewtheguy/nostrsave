@@ -566,161 +566,177 @@ async fn publish_to_index_relays(
     Ok(manifest_event_id)
 }
 
-/// Fetch all file index pages for a user
-async fn fetch_all_index_pages(
+/// Fetch a single file index page for a user
+async fn fetch_index_page(
     client: &Client,
     pubkey: &PublicKey,
+    page_num: u32,
     verbose: bool,
-) -> Vec<FileIndex> {
-    let mut pages = Vec::new();
-    let mut page_num = 1u32;
-
-    loop {
-        let filter = create_file_index_page_filter(pubkey, page_num);
-        match client.fetch_events(filter, Duration::from_secs(10)).await {
-            Ok(events) => {
-                if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
-                    match parse_file_index_event(event) {
-                        Ok(index) => {
-                            if verbose {
-                                println!("  Found page {} with {} files", page_num, index.len());
-                            }
-                            pages.push(index);
-                            page_num += 1;
+) -> Option<FileIndex> {
+    let filter = create_file_index_page_filter(pubkey, page_num);
+    match client.fetch_events(filter, Duration::from_secs(10)).await {
+        Ok(events) => {
+            if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
+                match parse_file_index_event(event) {
+                    Ok(index) => {
+                        if verbose {
+                            println!("  Found page {} with {} files", page_num, index.len());
                         }
-                        Err(e) => {
-                            if verbose {
-                                eprintln!("  Failed to parse page {}: {}", page_num, e);
-                            }
-                            break;
-                        }
+                        Some(index)
                     }
-                } else {
-                    // No more pages
-                    break;
+                    Err(e) => {
+                        if verbose {
+                            eprintln!("  Failed to parse page {}: {}", page_num, e);
+                        }
+                        None
+                    }
                 }
-            }
-            Err(e) => {
-                if verbose {
-                    eprintln!("  Failed to fetch page {}: {}", page_num, e);
-                }
-                break;
+            } else {
+                None
             }
         }
-    }
-
-    pages
-}
-
-/// Collect all entries from all pages into a single vector, sorted by uploaded_at descending (newest first)
-fn collect_all_entries(pages: &[FileIndex]) -> Vec<FileIndexEntry> {
-    let mut all_entries: Vec<FileIndexEntry> = pages
-        .iter()
-        .flat_map(|p| p.entries().iter().cloned())
-        .collect();
-
-    // Sort by uploaded_at descending (newest first)
-    all_entries.sort_by_key(|e| std::cmp::Reverse(e.uploaded_at()));
-
-    all_entries
-}
-
-/// Distribute entries across pages, respecting MAX_ENTRIES_PER_PAGE
-fn distribute_entries_to_pages(entries: Vec<FileIndexEntry>) -> Vec<FileIndex> {
-    if entries.is_empty() {
-        return vec![FileIndex::new()];
-    }
-
-    let total_pages = entries.len().div_ceil(MAX_ENTRIES_PER_PAGE);
-    let mut pages = Vec::with_capacity(total_pages);
-
-    for (page_idx, chunk) in entries.chunks(MAX_ENTRIES_PER_PAGE).enumerate() {
-        let page_num = (page_idx + 1) as u32;
-        let mut page = FileIndex::new_page(page_num, total_pages as u32);
-
-        // Add entries in reverse order (oldest first within page) since add_entry appends
-        // and we want entries sorted by uploaded_at ascending within each page
-        for entry in chunk.iter().rev() {
-            page.add_entry(entry.clone());
+        Err(e) => {
+            if verbose {
+                eprintln!("  Failed to fetch page {}: {}", page_num, e);
+            }
+            None
         }
-
-        pages.push(page);
     }
-
-    pages
 }
 
 /// Publish file index to connected relays (used for both data and index relays)
+/// Only fetches pages on demand when archiving cascades.
 async fn publish_file_index_to_relays(
     client: &Client,
     keys: &Keys,
     entry: FileIndexEntry,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // Fetch page 1 first to check if archiving is needed
-    let existing_pages = fetch_all_index_pages(client, &keys.public_key(), verbose).await;
+    // Fetch only page 1
+    let mut page1 = fetch_index_page(client, &keys.public_key(), 1, verbose)
+        .await
+        .unwrap_or_else(FileIndex::new);
 
-    // Build a temporary page 1 to check if archiving is needed
-    let mut page1 = existing_pages.first().cloned().unwrap_or_else(FileIndex::new);
     let old_total_pages = page1.total_pages();
 
     // Add entry to page 1 (will replace if same hash exists)
-    page1.add_entry(entry.clone());
+    page1.add_entry(entry);
 
-    // Check if archiving is triggered using needs_archiving()
-    let archiving_needed = page1.needs_archiving();
+    // Check if archiving is needed
+    if !page1.needs_archiving() {
+        // Simple case: just publish page 1
+        let event_builder = create_file_index_event(&page1)?;
+        client.send_event_builder(event_builder).await?;
 
-    if archiving_needed {
-        println!(
-            "  Index page 1 has {} files (max {}), archiving older entries...",
-            page1.len(),
-            MAX_ENTRIES_PER_PAGE
-        );
+        if verbose {
+            println!("  Index updated with {} files", page1.len());
+        }
+        return Ok(());
     }
 
-    // Collect all entries from all pages
-    let mut all_entries = collect_all_entries(&existing_pages);
+    // Archiving needed - cascade overflow to subsequent pages
+    println!(
+        "  Index page 1 has {} files (max {}), archiving older entries...",
+        page1.len(),
+        MAX_ENTRIES_PER_PAGE
+    );
 
-    // Check if this entry already exists (by file_hash) and remove it
-    all_entries.retain(|e| e.file_hash() != entry.file_hash());
+    // Collect pages that need to be published
+    let mut pages_to_publish: Vec<FileIndex> = Vec::new();
 
-    // Add the new entry at the beginning (it's the newest)
-    all_entries.insert(0, entry);
+    // Process page 1: keep newest MAX entries, overflow goes to next page
+    let mut entries: Vec<FileIndexEntry> = page1.entries().to_vec();
+    // Sort by uploaded_at descending (newest first)
+    entries.sort_by_key(|e| std::cmp::Reverse(e.uploaded_at()));
 
-    if verbose {
-        println!("  Total files after update: {}", all_entries.len());
+    let (keep, mut overflow) = if entries.len() > MAX_ENTRIES_PER_PAGE {
+        let (k, o) = entries.split_at(MAX_ENTRIES_PER_PAGE);
+        (k.to_vec(), o.to_vec())
+    } else {
+        (entries, Vec::new())
+    };
+
+    // Current page being processed
+    let mut current_page_num = 1u32;
+    let mut current_entries = keep;
+
+    // Process overflow by cascading to subsequent pages
+    while !overflow.is_empty() {
+        // Fetch next page if it exists
+        let next_page_num = current_page_num + 1;
+        let next_page = fetch_index_page(client, &keys.public_key(), next_page_num, verbose).await;
+
+        // Merge overflow with next page entries
+        let mut next_entries: Vec<FileIndexEntry> = if let Some(ref np) = next_page {
+            np.entries().to_vec()
+        } else {
+            Vec::new()
+        };
+
+        // Overflow entries are newer, so prepend them
+        overflow.append(&mut next_entries);
+        next_entries = overflow;
+
+        // Sort by uploaded_at descending
+        next_entries.sort_by_key(|e| std::cmp::Reverse(e.uploaded_at()));
+
+        // Check if this page also overflows
+        let (next_keep, next_overflow) = if next_entries.len() > MAX_ENTRIES_PER_PAGE {
+            let (k, o) = next_entries.split_at(MAX_ENTRIES_PER_PAGE);
+            (k.to_vec(), o.to_vec())
+        } else {
+            (next_entries, Vec::new())
+        };
+
+        // Save current page entries for later
+        let mut page = FileIndex::new_page(current_page_num, 0); // total_pages set later
+        for e in current_entries.into_iter().rev() {
+            page.add_entry(e);
+        }
+        pages_to_publish.push(page);
+
+        // Move to next page
+        current_page_num = next_page_num;
+        current_entries = next_keep;
+        overflow = next_overflow;
     }
 
-    // Distribute entries to pages
-    let new_pages = distribute_entries_to_pages(all_entries);
+    // Add the last page
+    let mut last_page = FileIndex::new_page(current_page_num, 0);
+    for e in current_entries.into_iter().rev() {
+        last_page.add_entry(e);
+    }
+    pages_to_publish.push(last_page);
+
+    // Calculate new total pages
+    let new_total_pages = pages_to_publish.len() as u32;
 
     // Report page count changes
-    if new_pages.len() as u32 > old_total_pages {
+    if new_total_pages > old_total_pages {
         println!(
             "  Created new archive page: now {} total pages",
-            new_pages.len()
+            new_total_pages
         );
     }
 
-    if verbose && new_pages.len() > 1 {
-        println!(
-            "  Distributing {} files across {} pages",
-            new_pages.iter().map(|p| p.len()).sum::<usize>(),
-            new_pages.len()
-        );
-    }
+    // Publish all affected pages with correct total_pages
+    for page in &mut pages_to_publish {
+        // Update total_pages in each page
+        let updated_page = FileIndex::new_page(page.page(), new_total_pages);
+        let mut final_page = updated_page;
+        for e in page.entries().iter().cloned() {
+            final_page.add_entry(e);
+        }
 
-    // Publish all pages
-    for page in &new_pages {
-        let event_builder = create_file_index_event(page)?;
+        let event_builder = create_file_index_event(&final_page)?;
         client.send_event_builder(event_builder).await?;
 
         if verbose {
             println!(
                 "  Published page {}/{} with {} files",
-                page.page(),
-                page.total_pages(),
-                page.len()
+                final_page.page(),
+                final_page.total_pages(),
+                final_page.len()
             );
         }
     }
