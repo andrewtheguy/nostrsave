@@ -3,9 +3,8 @@ use crate::manifest::Manifest;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::db::{delete_session_db, session_db_path, SCHEMA_VERSION};
+use super::db::{current_timestamp, delete_session_db, session_db_path, SCHEMA_VERSION};
 
 const DOWNLOAD_PREFIX: &str = "download";
 
@@ -121,10 +120,7 @@ impl DownloadSession {
             ",
         )?;
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = current_timestamp()?;
 
         let manifest_json = serde_json::to_string(&meta.manifest)?;
 
@@ -154,10 +150,7 @@ impl DownloadSession {
 
     /// Store a downloaded chunk.
     pub fn store_chunk(&self, index: usize, data: &[u8], chunk_hash: &str) -> anyhow::Result<()> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = current_timestamp()?;
 
         self.conn.execute(
             "INSERT OR REPLACE INTO downloaded_chunks (chunk_index, data, chunk_hash, downloaded_at)

@@ -1,9 +1,8 @@
 use crate::config::EncryptionAlgorithm;
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::db::{delete_session_db, session_db_path, SCHEMA_VERSION};
+use super::db::{current_timestamp, delete_session_db, session_db_path, SCHEMA_VERSION};
 
 const UPLOAD_PREFIX: &str = "upload";
 
@@ -121,10 +120,7 @@ impl UploadSession {
             ",
         )?;
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = current_timestamp()?;
 
         let relays_json = serde_json::to_string(&meta.relays)?;
 
@@ -160,10 +156,7 @@ impl UploadSession {
         event_id: &str,
         chunk_hash: &str,
     ) -> anyhow::Result<()> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = current_timestamp()?;
 
         self.conn.execute(
             "INSERT OR REPLACE INTO published_chunks (chunk_index, event_id, chunk_hash, published_at)

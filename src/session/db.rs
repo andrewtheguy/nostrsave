@@ -2,6 +2,7 @@ use sha2::{Digest, Sha512};
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Current schema version. Sessions with different versions are not compatible.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -58,4 +59,13 @@ pub fn delete_session_db(prefix: &str, hash_full: &str) -> anyhow::Result<()> {
         fs::remove_file(&path)?;
     }
     Ok(())
+}
+
+/// Get current Unix timestamp in seconds.
+/// Returns an error if system clock is before Unix epoch (requires user to fix system clock).
+pub fn current_timestamp() -> anyhow::Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| anyhow::anyhow!("system clock error: time is before Unix epoch ({})", e))
 }
