@@ -51,7 +51,9 @@ pub async fn discover_relays_from_nostr_watch() -> anyhow::Result<Vec<String>> {
     Ok(relays)
 }
 
-/// Test a single relay for connectivity and round-trip with chunk-sized payload
+/// Test a single relay for connectivity and round-trip with chunk-sized payload.
+/// This is used by the `discover-relays` command to validate relays for this app's
+/// file-chunk use case (not an integration test harness).
 pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> RelayTestResult {
     let start = Instant::now();
 
