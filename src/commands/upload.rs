@@ -683,9 +683,50 @@ async fn publish_file_index_to_relays(
     // Create fresh current index with just the new entry
     let new_current = FileIndex::new_with_entries(vec![entry], new_total_archives);
 
-    // Publish archive first (immutable)
+    // Publish archive first (immutable) with retry
     let archive_event = create_file_index_event(&archive)?;
-    client.send_event_builder(archive_event).await?;
+    let mut archive_last_error = None;
+    for attempt in 0..=MAX_RETRIES {
+        match client.send_event_builder(archive_event.clone()).await {
+            Ok(_) => {
+                archive_last_error = None;
+                break;
+            }
+            Err(e) => {
+                archive_last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    // Calculate delay with exponential backoff and jitter
+                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+                    let jitter = (SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .subsec_nanos()
+                        % 200) as u64;
+                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+
+                    if verbose {
+                        eprintln!(
+                            "  Archive {} failed (attempt {}/{}), retrying in {}ms...",
+                            new_archive_number,
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            delay
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+            }
+        }
+    }
+
+    if let Some(e) = archive_last_error {
+        return Err(anyhow::anyhow!(
+            "Failed to publish archive {} after {} retries: {}",
+            new_archive_number,
+            MAX_RETRIES + 1,
+            e
+        ));
+    }
 
     if verbose {
         println!(
@@ -707,15 +748,24 @@ async fn publish_file_index_to_relays(
             Err(e) => {
                 last_error = Some(e);
                 if attempt < MAX_RETRIES {
-                    let delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    // Calculate delay with exponential backoff and jitter
+                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+                    let jitter = (SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .subsec_nanos()
+                        % 200) as u64;
+                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+
                     if verbose {
                         eprintln!(
-                            "  Retrying current index publication (attempt {}/{})",
-                            attempt + 2,
-                            MAX_RETRIES + 1
+                            "  Current index failed (attempt {}/{}), retrying in {}ms...",
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            delay
                         );
                     }
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
             }
         }
