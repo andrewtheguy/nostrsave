@@ -2,8 +2,13 @@
 
 ## Ideas
 
-### AES-256-GCM Chunk Encryption
-Encrypt each chunk individually with AES-256-GCM before publishing. The encryption key would be derived from the user's Nostr key or a separate passphrase. Chunks would be published as "unencrypted" events (no NIP-44 wrapper), reducing overhead while maintaining confidentiality. The manifest would store the key derivation parameters.
+### AES-256-GCM Chunk Encryption (see also: Passkey PRF Extension)
+Encrypt each chunk individually with AES-256-GCM before publishing:
+- Decouple encryption from Nostr identity - use separate encryption keys
+- Key derivation options: passphrase, PRF-derived, or recipient public key
+- Chunks published as "unencrypted" events (no NIP-44 wrapper), reducing overhead
+- Manifest stores key derivation parameters
+- Enables sharing encrypted files by encrypting to recipient's public key
 
 ### Relay Publishing Server
 An intermediate server that accepts chunk submissions and handles relay publishing:
@@ -56,12 +61,15 @@ Reduce disk usage during download by purging chunks from the session database as
 - Useful for large files where disk space is limited
 - Trade-off: cannot resume assembly if interrupted mid-assembly (would need to re-download)
 
-### Passkey PRF Extension for Key Derivation
-Use WebAuthn PRF (Pseudo-Random Function) extension to derive Nostr keypairs from passkeys:
-- Hardware-backed key derivation using FIDO2 authenticators (YubiKey, Touch ID, etc.)
-- Deterministic: same passkey + salt always produces same keypair
-- No private key stored on disk - derived on-demand during authentication
+### Passkey PRF Extension for Key Derivation (see also: AES-256-GCM Chunk Encryption)
+Use WebAuthn PRF (Pseudo-Random Function) extension for hardware-backed key derivation:
+- FIDO2 authenticators (YubiKey, Touch ID, etc.) provide secure key derivation
+- Deterministic: same passkey + salt always produces same key material
+- Two use cases:
+  1. Derive Nostr keypair - no private key stored on disk
+  2. Derive encryption key only - protects file content even if nsec is stolen
+- Self-transfer scenario: use existing nsec for publishing, PRF for encryption
+  - Attacker with stolen nsec can see events but cannot decrypt file contents
 - Could integrate with web interface for browser-based key derivation
 - Requires PRF-compatible authenticator and browser support
-- Salt could be stored in config, keypair derived at runtime
 
