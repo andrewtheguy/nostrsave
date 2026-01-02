@@ -1,15 +1,12 @@
 use crate::config::EncryptionAlgorithm;
 use crate::crypto;
-use crate::nostr::{create_chunk_event, ChunkMetadata};
+use crate::nostr::{create_chunk_event, create_chunk_filter, ChunkMetadata};
 use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
 use rand::Rng;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
-
-/// Kind for test chunk events (same as file chunks)
-const TEST_CHUNK_KIND: u16 = 30078;
 
 /// Result of testing a single relay
 #[derive(Debug, Clone, Serialize)]
@@ -125,16 +122,17 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     };
 
     // Create a test chunk event with the same structure as production uploads
+    let filename_suffix: u32 = rand::thread_rng().gen();
+    let filename = format!("nostrsave-relay-test-{:08x}", filename_suffix);
     let metadata = ChunkMetadata {
         file_hash: &test_hash,
         chunk_index: 0,
         total_chunks: 1,
         chunk_hash: &test_hash,
         chunk_data: &test_data,
-        filename: "nostrsave-relay-test",
+        filename: &filename,
         encryption: EncryptionAlgorithm::Nip44,
     };
-    let d_tag = format!("{}:{}", test_hash, metadata.chunk_index);
     let builder = match create_chunk_event(&metadata, &encrypted_content) {
         Ok(builder) => builder,
         Err(e) => {
@@ -184,11 +182,8 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Fetch the test event back
-    let filter = Filter::new()
-        .kind(Kind::Custom(TEST_CHUNK_KIND))
-        .author(keys.public_key())
-        .identifier(d_tag.clone())
-        .limit(1);
+    let mut filter = create_chunk_filter(&test_hash, Some(&keys.public_key()));
+    filter = filter.limit(1);
 
     let (can_read, error) = match client.fetch_events(filter, timeout).await {
         Ok(events) => {
