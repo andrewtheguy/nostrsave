@@ -184,8 +184,7 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Fetch the test event back
-    let mut filter = create_chunk_filter(&test_hash, Some(&keys.public_key()));
-    filter = filter.limit(1);
+    let filter = create_chunk_filter(&test_hash, Some(&keys.public_key())).limit(1);
 
     let (can_read, error) = match client.fetch_events(filter, timeout).await {
         Ok(events) => {
