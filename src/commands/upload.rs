@@ -612,6 +612,23 @@ async fn fetch_current_index(
 /// Uses O(1) archiving: when the current index is full, its entries are moved
 /// to a new immutable archive and a fresh current index is created with just
 /// the new entry. No cascading through existing archives is needed.
+///
+/// # Consistency Notes
+///
+/// **Archive publication gap**: The archive is published before the new current index.
+/// If the current index publication fails after the archive succeeds:
+/// - The archive exists with `total_archives = N+1`
+/// - The old current index still shows `total_archives = N`
+/// - The new archive becomes "orphaned" (not reachable via pagination)
+///
+/// This is recoverable: the next successful upload will update the current index.
+/// The orphaned archive will be replaced when archiving triggers again with the
+/// same archive number. We retry the current index publication to minimize this risk.
+///
+/// **Concurrent uploads**: The fetch-then-update pattern is not atomic. If two
+/// uploads run concurrently, the later publication may overwrite entries from the
+/// earlier one. This is acceptable given Nostr's eventual consistency model and
+/// the typical single-user CLI usage pattern.
 async fn publish_file_index_to_relays(
     client: &Client,
     keys: &Keys,
@@ -666,7 +683,7 @@ async fn publish_file_index_to_relays(
     // Create fresh current index with just the new entry
     let new_current = FileIndex::new_with_entries(vec![entry], new_total_archives);
 
-    // Publish archive first (immutable, order doesn't matter but good practice)
+    // Publish archive first (immutable)
     let archive_event = create_file_index_event(&archive)?;
     client.send_event_builder(archive_event).await?;
 
@@ -678,9 +695,46 @@ async fn publish_file_index_to_relays(
         );
     }
 
-    // Publish new current index
+    // Publish new current index with retry to minimize orphaned archive risk
     let current_event = create_file_index_event(&new_current)?;
-    client.send_event_builder(current_event).await?;
+    let mut last_error = None;
+    for attempt in 0..=MAX_RETRIES {
+        match client.send_event_builder(current_event.clone()).await {
+            Ok(_) => {
+                last_error = None;
+                break;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    let delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    if verbose {
+                        eprintln!(
+                            "  Retrying current index publication (attempt {}/{})",
+                            attempt + 2,
+                            MAX_RETRIES + 1
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(e) = last_error {
+        // Archive was published but current index failed - log warning
+        eprintln!(
+            "  Warning: Archive {} published but current index update failed.\n  \
+             The archive may be orphaned until the next successful upload.\n  \
+             Error: {}",
+            new_archive_number, e
+        );
+        return Err(anyhow::anyhow!(
+            "Failed to publish current index after {} retries: {}",
+            MAX_RETRIES + 1,
+            e
+        ));
+    }
 
     println!(
         "  Archived {} files, new index has {} file(s) ({} total pages)",
