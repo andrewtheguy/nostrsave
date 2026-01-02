@@ -251,15 +251,8 @@ impl FileIndex {
         self.total_pages
     }
 
-    /// Set the total pages count (used when updating after archiving)
-    #[allow(dead_code)]
-    pub fn set_total_pages(&mut self, total: u32) {
-        self.total_pages = total;
-    }
-
     /// Check if this index needs archiving (too many entries)
     #[must_use]
-    #[allow(dead_code)]
     pub fn needs_archiving(&self) -> bool {
         self.entries.len() > MAX_ENTRIES_PER_PAGE
     }
@@ -272,31 +265,6 @@ impl FileIndex {
         } else {
             format!("{}-page-{}", FILE_INDEX_IDENTIFIER, self.page)
         }
-    }
-
-    /// Split this index for archiving.
-    /// Returns (current_page, archive_page) where:
-    /// - current_page: newest MAX_ENTRIES_PER_PAGE entries (stays as page 1)
-    /// - archive_page: older entries (becomes page 2, pushing existing pages down)
-    #[allow(dead_code)]
-    pub fn split_for_archive(&self) -> (FileIndex, FileIndex) {
-        let split_point = self.entries.len().saturating_sub(MAX_ENTRIES_PER_PAGE);
-
-        // Older entries go to archive (indices 0..split_point)
-        let archive_entries: Vec<FileIndexEntry> = self.entries[..split_point].to_vec();
-
-        // Newer entries stay in current page (indices split_point..)
-        let current_entries: Vec<FileIndexEntry> = self.entries[split_point..].to_vec();
-
-        let new_total_pages = self.total_pages + 1;
-
-        let mut current = FileIndex::new_page(1, new_total_pages);
-        current.entries = current_entries;
-
-        let mut archive = FileIndex::new_page(2, new_total_pages);
-        archive.entries = archive_entries;
-
-        (current, archive)
     }
 }
 
@@ -417,49 +385,6 @@ mod tests {
         .unwrap();
         index.add_entry(entry);
         assert!(index.needs_archiving());
-    }
-
-    #[test]
-    fn test_file_index_split_for_archive() {
-        let mut index = FileIndex::new();
-
-        // Add entries with increasing timestamps so we can verify order
-        for i in 0..(MAX_ENTRIES_PER_PAGE + 100) {
-            let hash = format!(
-                "sha256:{:064x}",
-                i
-            );
-            let entry = FileIndexEntry::new(
-                hash,
-                format!("file{i}.txt"),
-                1024,
-                1234567890 + i as u64,
-                EncryptionAlgorithm::Nip44,
-            )
-            .unwrap();
-            index.add_entry(entry);
-        }
-
-        let (current, archive) = index.split_for_archive();
-
-        // Current page should have MAX_ENTRIES_PER_PAGE entries (the newest ones)
-        assert_eq!(current.len(), MAX_ENTRIES_PER_PAGE);
-        assert_eq!(current.page(), 1);
-        assert_eq!(current.total_pages(), 2);
-        assert_eq!(current.get_identifier(), "nostrsave-index");
-
-        // Archive page should have 100 entries (the oldest ones)
-        assert_eq!(archive.len(), 100);
-        assert_eq!(archive.page(), 2);
-        assert_eq!(archive.total_pages(), 2);
-        assert_eq!(archive.get_identifier(), "nostrsave-index-page-2");
-
-        // Verify the oldest entries are in the archive
-        assert_eq!(archive.entries()[0].file_name(), "file0.txt");
-        assert_eq!(archive.entries()[99].file_name(), "file99.txt");
-
-        // Verify the newest entries are in current
-        assert_eq!(current.entries()[0].file_name(), "file100.txt");
     }
 
     #[test]

@@ -657,10 +657,28 @@ async fn publish_file_index_to_relays(
     entry: FileIndexEntry,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // Fetch all existing pages
+    // Fetch page 1 first to check if archiving is needed
     let existing_pages = fetch_all_index_pages(client, &keys.public_key(), verbose).await;
 
-    // Collect all entries
+    // Build a temporary page 1 to check if archiving is needed
+    let mut page1 = existing_pages.first().cloned().unwrap_or_else(FileIndex::new);
+    let old_total_pages = page1.total_pages();
+
+    // Add entry to page 1 (will replace if same hash exists)
+    page1.add_entry(entry.clone());
+
+    // Check if archiving is triggered using needs_archiving()
+    let archiving_needed = page1.needs_archiving();
+
+    if archiving_needed {
+        println!(
+            "  Index page 1 has {} files (max {}), archiving older entries...",
+            page1.len(),
+            MAX_ENTRIES_PER_PAGE
+        );
+    }
+
+    // Collect all entries from all pages
     let mut all_entries = collect_all_entries(&existing_pages);
 
     // Check if this entry already exists (by file_hash) and remove it
@@ -676,9 +694,17 @@ async fn publish_file_index_to_relays(
     // Distribute entries to pages
     let new_pages = distribute_entries_to_pages(all_entries);
 
+    // Report page count changes
+    if new_pages.len() as u32 > old_total_pages {
+        println!(
+            "  Created new archive page: now {} total pages",
+            new_pages.len()
+        );
+    }
+
     if verbose && new_pages.len() > 1 {
         println!(
-            "  Archiving: distributing {} files across {} pages",
+            "  Distributing {} files across {} pages",
             new_pages.iter().map(|p| p.len()).sum::<usize>(),
             new_pages.len()
         );
