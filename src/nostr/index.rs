@@ -22,7 +22,7 @@ fn archive_identifier(archive_number: u32) -> String {
 pub const CURRENT_FILE_INDEX_VERSION: u8 = 2;
 
 /// Maximum entries per index page before archiving
-pub const MAX_ENTRIES_PER_PAGE: usize = 1000;
+pub const MAX_ENTRIES_PER_PAGE: usize = 3;
 
 /// Expected length of SHA-256 hash in hex (64 characters)
 const SHA256_HEX_LEN: usize = 64;
@@ -305,22 +305,6 @@ impl FileIndex {
         1 + self.total_archives
     }
 
-    /// Get the page number for display purposes.
-    ///
-    /// Page 1 is always the current index.
-    /// Page 2 is the most recent archive (highest archive number).
-    /// Page 3 is the second most recent archive, etc.
-    #[must_use]
-    pub fn page(&self) -> u32 {
-        if self.archive_number == 0 {
-            1
-        } else {
-            // archive_number N -> page (total_archives - N + 2)
-            // e.g., with 3 archives: archive 3 -> page 2, archive 2 -> page 3, archive 1 -> page 4
-            self.total_archives - self.archive_number + 2
-        }
-    }
-
     /// Check if this index needs archiving (too many entries)
     #[must_use]
     pub fn needs_archiving(&self) -> bool {
@@ -445,7 +429,6 @@ mod tests {
         assert_eq!(index.version(), CURRENT_FILE_INDEX_VERSION);
         assert!(index.is_empty());
         assert_eq!(index.total_archives(), 0);
-        assert_eq!(index.page(), 1);
         assert_eq!(index.total_pages(), 1);
         assert_eq!(index.get_identifier(), "nostrsave-index");
     }
@@ -466,24 +449,19 @@ mod tests {
 
     #[test]
     fn test_file_index_page_mapping() {
-        // With 3 archives, pages map as follows:
-        // Page 1 = current index (archive_number = 0)
-        // Page 2 = archive 3 (most recent)
-        // Page 3 = archive 2
-        // Page 4 = archive 1 (oldest)
+        // With 3 archives, total_pages = 4 (1 current + 3 archives)
+        // Page mapping is handled by page_to_archive_number() - see test_page_to_archive_number
 
         let current = FileIndex::new_with_entries(vec![], 3);
-        assert_eq!(current.page(), 1);
         assert_eq!(current.total_pages(), 4);
+        assert_eq!(current.total_archives(), 3);
 
+        // Verify identifiers are correct
         let archive3 = FileIndex::new_archive_with_entries(vec![], 3, 3).unwrap();
-        assert_eq!(archive3.page(), 2);
-
-        let archive2 = FileIndex::new_archive_with_entries(vec![], 2, 3).unwrap();
-        assert_eq!(archive2.page(), 3);
+        assert_eq!(archive3.get_identifier(), "nostrsave-index-archive-3");
 
         let archive1 = FileIndex::new_archive_with_entries(vec![], 1, 3).unwrap();
-        assert_eq!(archive1.page(), 4);
+        assert_eq!(archive1.get_identifier(), "nostrsave-index-archive-1");
     }
 
     #[test]
