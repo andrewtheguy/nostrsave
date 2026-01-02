@@ -31,6 +31,25 @@ flowchart LR
 
 The download session stores received chunks in SQLite. If interrupted, re-running the command only fetches missing chunks. File assembly happens atomically after all chunks are collected.
 
+### List Flow
+
+```mermaid
+flowchart LR
+    A[Determine<br/>Target Pubkey] --> B[Connect to<br/>Index Relays]
+    B --> C[Fetch File Index<br/>Kind 30080]
+    C --> D{Index<br/>Found?}
+    D -->|Yes| E[Select Most Recent<br/>by created_at]
+    D -->|No| F[Display<br/>Empty Message]
+    E --> G[Parse & Display<br/>File Entries]
+```
+
+The file index is a single replaceable event (Kind 30080) that contains metadata for all uploaded files. When listing:
+
+1. **Target pubkey:** Uses your own pubkey by default, or `--pubkey` to view another user's files
+2. **Relay selection:** Queries index relays (not data relays) where manifests are published
+3. **Event selection:** If multiple index events exist, the most recent by `created_at` is used
+4. **Read-only for others:** You can list any user's files, but only download encrypted files if you have the private key
+
 ## Nostr Event Structure
 
 ### Chunk Event (Kind 30078)
