@@ -22,7 +22,7 @@ fn archive_identifier(archive_number: u32) -> String {
 pub const CURRENT_FILE_INDEX_VERSION: u8 = 2;
 
 /// Maximum entries per index page before archiving
-pub const MAX_ENTRIES_PER_PAGE: usize = 3;
+pub const MAX_ENTRIES_PER_PAGE: usize = 1000;
 
 /// Expected length of SHA-256 hash in hex (64 characters)
 const SHA256_HEX_LEN: usize = 64;
