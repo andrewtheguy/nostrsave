@@ -173,7 +173,7 @@ pub async fn execute(
                             );
                             eprintln!("Retrying in {}ms...", SESSION_RETRY_DELAY_MS);
                         }
-                        std::thread::sleep(Duration::from_millis(SESSION_RETRY_DELAY_MS));
+                        tokio::time::sleep(Duration::from_millis(SESSION_RETRY_DELAY_MS)).await;
                         last_error = Some(e);
                         continue;
                     }
