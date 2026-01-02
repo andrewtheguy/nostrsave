@@ -103,7 +103,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
 
     // 3. Fetch file index
     // Always fetch current index first to get total_archives
-    println!("Fetching file index (page {})...\n", page);
+    println!("Fetching current index...");
 
     let current_filter = create_current_index_filter(&target_pubkey);
     let current_index = match client.fetch_events(current_filter, Duration::from_secs(10)).await {
@@ -143,6 +143,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
 
         match page_to_archive_number(page, total_archives) {
             Some(archive_number) => {
+                println!("Fetching archive page {} (archive {})...", page, archive_number);
                 let archive_filter = create_archive_filter(&target_pubkey, archive_number);
                 match client.fetch_events(archive_filter, Duration::from_secs(10)).await {
                     Ok(events) => {

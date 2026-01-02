@@ -393,7 +393,12 @@ pub fn page_to_archive_number(page: u32, total_archives: u32) -> Option<u32> {
     Some(total_archives + 2 - page)
 }
 
-/// Parse a file index from a Nostr event
+/// Parse a file index from a Nostr event.
+///
+/// Validates:
+/// - Event kind matches FILE_INDEX_EVENT_KIND
+/// - Version matches CURRENT_FILE_INDEX_VERSION
+/// - Archive fields are consistent (archive_number <= total_archives for archives)
 pub fn parse_file_index_event(event: &Event) -> anyhow::Result<FileIndex> {
     if event.kind != Kind::Custom(FILE_INDEX_EVENT_KIND) {
         return Err(anyhow::anyhow!(
@@ -410,6 +415,17 @@ pub fn parse_file_index_event(event: &Event) -> anyhow::Result<FileIndex> {
             "Unsupported file index version: expected {}, got {}",
             CURRENT_FILE_INDEX_VERSION,
             index.version()
+        ));
+    }
+
+    // Validate archive_number and total_archives consistency
+    // For archives (archive_number > 0): must have archive_number <= total_archives
+    // This prevents underflow in page() calculation
+    if index.archive_number > 0 && index.archive_number > index.total_archives {
+        return Err(anyhow::anyhow!(
+            "Invalid archive: archive_number ({}) exceeds total_archives ({})",
+            index.archive_number,
+            index.total_archives
         ));
     }
 
