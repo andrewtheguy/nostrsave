@@ -23,10 +23,11 @@ async fn main() -> anyhow::Result<()> {
             chunk_size,
             output,
             encryption,
+            force,
         } => {
             // CLI flag takes precedence, then config, then default
             let encryption = encryption.unwrap_or_else(config::get_encryption_algorithm);
-            commands::upload::execute(file, chunk_size, output, cli.key_file.as_deref(), encryption, cli.verbose).await?;
+            commands::upload::execute(file, chunk_size, output, cli.key_file.as_deref(), encryption, force, cli.verbose).await?;
         }
         Commands::Download {
             manifest,

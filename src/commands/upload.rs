@@ -22,12 +22,64 @@ const BASE_RETRY_DELAY_MS: u64 = 500;
 /// Maximum delay cap for retries
 const MAX_RETRY_DELAY_MS: u64 = 5000;
 
+/// Maximum number of retry attempts for opening session database
+const SESSION_OPEN_RETRIES: u32 = 3;
+/// Delay between session open retries in milliseconds
+const SESSION_RETRY_DELAY_MS: u64 = 200;
+
+/// Classify whether an error is likely transient (worth retrying) or irrecoverable.
+/// Returns true if the error appears transient (I/O, lock contention, etc.)
+fn is_transient_error(err: &anyhow::Error) -> bool {
+    let err_str = err.to_string().to_lowercase();
+
+    // SQLite transient errors
+    if err_str.contains("database is locked")
+        || err_str.contains("sqlite_busy")
+        || err_str.contains("unable to open database")
+        || err_str.contains("disk i/o error")
+    {
+        return true;
+    }
+
+    // General I/O transient errors
+    if err_str.contains("resource temporarily unavailable")
+        || err_str.contains("interrupted")
+        || err_str.contains("would block")
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Classify whether an error indicates irrecoverable corruption.
+fn is_corruption_error(err: &anyhow::Error) -> bool {
+    let err_str = err.to_string().to_lowercase();
+
+    // Schema version mismatch is recoverable by deletion
+    if err_str.contains("schema version mismatch") {
+        return true;
+    }
+
+    // SQLite corruption
+    if err_str.contains("database disk image is malformed")
+        || err_str.contains("database is corrupt")
+        || err_str.contains("sqlite_corrupt")
+        || err_str.contains("file is not a database")
+    {
+        return true;
+    }
+
+    false
+}
+
 pub async fn execute(
     file: PathBuf,
     chunk_size: usize,
     output: Option<PathBuf>,
     key_file: Option<&str>,
     encryption: EncryptionAlgorithm,
+    force: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load config - private key and relays
@@ -77,34 +129,99 @@ pub async fn execute(
     let mut resuming = false;
 
     if session_exists {
-        // Try to open session to get progress info
-        match UploadSession::open(&file_hash_full) {
-            Ok(existing_session) => {
-                let published = existing_session.get_published_count()?;
-                let total = existing_session.total_chunks;
-                drop(existing_session); // Release the lock
+        // Try to open session with retry logic for transient errors
+        let mut last_error: Option<anyhow::Error> = None;
+        let mut session_opened = false;
 
-                print!(
-                    "Resume interrupted upload? ({}/{} chunks done) [Y/n] ",
-                    published, total
-                );
-                io::stdout().flush()?;
+        for attempt in 0..=SESSION_OPEN_RETRIES {
+            match UploadSession::open(&file_hash_full) {
+                Ok(existing_session) => {
+                    let published = existing_session.get_published_count()?;
+                    let total = existing_session.total_chunks;
+                    drop(existing_session); // Release the lock
 
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
+                    print!(
+                        "Resume interrupted upload? ({}/{} chunks done) [Y/n] ",
+                        published, total
+                    );
+                    io::stdout().flush()?;
 
-                let input = input.trim().to_lowercase();
-                if input.is_empty() || input == "y" || input == "yes" {
-                    resuming = true;
-                } else {
-                    println!("Starting fresh upload...");
-                    UploadSession::delete(&file_hash_full)?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+
+                    let input = input.trim().to_lowercase();
+                    if input.is_empty() || input == "y" || input == "yes" {
+                        resuming = true;
+                    } else {
+                        println!("Starting fresh upload...");
+                        UploadSession::delete(&file_hash_full)?;
+                    }
+                    session_opened = true;
+                    break;
+                }
+                Err(e) => {
+                    // Check if error is transient and worth retrying
+                    if is_transient_error(&e) && attempt < SESSION_OPEN_RETRIES {
+                        if verbose {
+                            eprintln!(
+                                "Session open failed (attempt {}/{}): {}",
+                                attempt + 1,
+                                SESSION_OPEN_RETRIES + 1,
+                                e
+                            );
+                            eprintln!("Retrying in {}ms...", SESSION_RETRY_DELAY_MS);
+                        }
+                        std::thread::sleep(Duration::from_millis(SESSION_RETRY_DELAY_MS));
+                        last_error = Some(e);
+                        continue;
+                    }
+                    last_error = Some(e);
+                    break;
                 }
             }
-            Err(e) => {
-                eprintln!("Warning: Could not open existing session: {}", e);
-                eprintln!("Starting fresh upload...");
-                UploadSession::delete(&file_hash_full)?;
+        }
+
+        // Handle session open failure after retries
+        if !session_opened {
+            if let Some(e) = last_error {
+                eprintln!("Error: Could not open existing session after {} attempts", SESSION_OPEN_RETRIES + 1);
+                eprintln!("Details: {}", e);
+                eprintln!("Full error chain: {:?}", e);
+
+                // Check if this is a corruption error that requires deletion
+                if is_corruption_error(&e) {
+                    eprintln!("\nThe session database appears to be corrupted or incompatible.");
+
+                    if force {
+                        eprintln!("--force specified, deleting corrupted session...");
+                        UploadSession::delete(&file_hash_full)?;
+                    } else {
+                        print!("Delete corrupted session and start fresh? [y/N] ");
+                        io::stdout().flush()?;
+
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+
+                        let input = input.trim().to_lowercase();
+                        if input == "y" || input == "yes" {
+                            println!("Deleting corrupted session...");
+                            UploadSession::delete(&file_hash_full)?;
+                        } else {
+                            return Err(anyhow::anyhow!(
+                                "Session corrupted. Use --force to delete, or manually remove the session file."
+                            ));
+                        }
+                    }
+                } else {
+                    // Non-corruption error after retries exhausted
+                    return Err(anyhow::anyhow!(
+                        "Failed to open session after {} retries: {}. \
+                         If another process is using this session, wait and retry. \
+                         Use --force to delete the session and start fresh.",
+                        SESSION_OPEN_RETRIES + 1,
+                        e
+                    ));
+                }
             }
         }
     }
