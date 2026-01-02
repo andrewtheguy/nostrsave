@@ -5,6 +5,11 @@ use nostr_sdk::prelude::*;
 use std::time::Duration;
 
 pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_relays: bool, page: u32, verbose: bool) -> anyhow::Result<()> {
+    // Validate page number
+    if page == 0 {
+        return Err(anyhow::anyhow!("Invalid page: must be >= 1"));
+    }
+
     // 1. Determine which public key to query
     let target_pubkey = if let Some(pk) = pubkey {
         // User specified a public key
