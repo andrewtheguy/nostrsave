@@ -648,8 +648,9 @@ async fn publish_file_index_to_relays(
         MAX_ENTRIES_PER_PAGE
     );
 
-    // Collect pages that need to be published
-    let mut pages_to_publish: Vec<FileIndex> = Vec::new();
+    // Collect page entries first (page_num -> entries), then create FileIndex objects
+    // with correct total_pages after we know the final count
+    let mut page_entries: Vec<(u32, Vec<FileIndexEntry>)> = Vec::new();
 
     // Process page 1: keep newest MAX entries, overflow goes to next page
     let mut entries: Vec<FileIndexEntry> = page1.entries().to_vec();
@@ -695,12 +696,8 @@ async fn publish_file_index_to_relays(
             (next_entries, Vec::new())
         };
 
-        // Save current page entries for later
-        let mut page = FileIndex::new_page(current_page_num, 0); // total_pages set later
-        for e in current_entries.into_iter().rev() {
-            page.add_entry(e);
-        }
-        pages_to_publish.push(page);
+        // Save current page entries for later (will create FileIndex after knowing total)
+        page_entries.push((current_page_num, current_entries));
 
         // Move to next page
         current_page_num = next_page_num;
@@ -708,15 +705,11 @@ async fn publish_file_index_to_relays(
         overflow = next_overflow;
     }
 
-    // Add the last page
-    let mut last_page = FileIndex::new_page(current_page_num, 0);
-    for e in current_entries.into_iter().rev() {
-        last_page.add_entry(e);
-    }
-    pages_to_publish.push(last_page);
+    // Add the last page entries
+    page_entries.push((current_page_num, current_entries));
 
-    // Calculate new total pages
-    let new_total_pages = pages_to_publish.len() as u32;
+    // Now we know the total pages count
+    let new_total_pages = page_entries.len() as u32;
 
     // Report page count changes
     if new_total_pages > old_total_pages {
@@ -726,24 +719,23 @@ async fn publish_file_index_to_relays(
         );
     }
 
-    // Publish all affected pages with correct total_pages
-    for page in &mut pages_to_publish {
-        // Update total_pages in each page
-        let updated_page = FileIndex::new_page(page.page(), new_total_pages);
-        let mut final_page = updated_page;
-        for e in page.entries().iter().cloned() {
-            final_page.add_entry(e);
+    // Create and publish all pages with correct total_pages
+    for (page_num, entries) in page_entries {
+        let mut page = FileIndex::new_page(page_num, new_total_pages)?;
+        // Add entries in reverse order (oldest first within page)
+        for e in entries.into_iter().rev() {
+            page.add_entry(e);
         }
 
-        let event_builder = create_file_index_event(&final_page)?;
+        let event_builder = create_file_index_event(&page)?;
         client.send_event_builder(event_builder).await?;
 
         if verbose {
             println!(
                 "  Published page {}/{} with {} files",
-                final_page.page(),
-                final_page.total_pages(),
-                final_page.len()
+                page.page(),
+                page.total_pages(),
+                page.len()
             );
         }
     }

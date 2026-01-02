@@ -5,6 +5,16 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// Identifier for the file index replaceable event (page 1)
 pub const FILE_INDEX_IDENTIFIER: &str = "nostrsave-index";
 
+/// Generate the d-tag identifier for a given page number.
+/// Page 1 uses the base identifier, other pages use "-page-N" suffix.
+fn page_identifier(page: u32) -> String {
+    if page == 1 {
+        FILE_INDEX_IDENTIFIER.to_string()
+    } else {
+        format!("{}-page-{}", FILE_INDEX_IDENTIFIER, page)
+    }
+}
+
 /// Current file index version
 pub const CURRENT_FILE_INDEX_VERSION: u8 = 2;
 
@@ -190,14 +200,34 @@ impl FileIndex {
         }
     }
 
-    /// Create a file index for a specific page
-    pub fn new_page(page: u32, total_pages: u32) -> Self {
-        Self {
+    /// Create a file index for a specific page.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - `total_pages` is 0
+    /// - `page` is 0
+    /// - `page` > `total_pages`
+    pub fn new_page(page: u32, total_pages: u32) -> anyhow::Result<Self> {
+        if total_pages == 0 {
+            return Err(anyhow::anyhow!("Invalid total_pages: must be >= 1"));
+        }
+        if page == 0 {
+            return Err(anyhow::anyhow!("Invalid page: must be >= 1"));
+        }
+        if page > total_pages {
+            return Err(anyhow::anyhow!(
+                "Invalid page: {} exceeds total_pages {}",
+                page,
+                total_pages
+            ));
+        }
+
+        Ok(Self {
             version: CURRENT_FILE_INDEX_VERSION,
             entries: Vec::new(),
             page,
             total_pages,
-        }
+        })
     }
 
     /// Add an entry, replacing any existing entry with the same file_hash
@@ -260,11 +290,7 @@ impl FileIndex {
     /// Get the d-tag identifier for this index page
     #[must_use]
     pub fn get_identifier(&self) -> String {
-        if self.page == 1 {
-            FILE_INDEX_IDENTIFIER.to_string()
-        } else {
-            format!("{}-page-{}", FILE_INDEX_IDENTIFIER, self.page)
-        }
+        page_identifier(self.page)
     }
 }
 
@@ -287,16 +313,10 @@ pub fn create_file_index_event(index: &FileIndex) -> anyhow::Result<EventBuilder
 
 /// Create a filter to query for a specific page of a user's file index
 pub fn create_file_index_page_filter(pubkey: &PublicKey, page: u32) -> Filter {
-    let identifier = if page == 1 {
-        FILE_INDEX_IDENTIFIER.to_string()
-    } else {
-        format!("{}-page-{}", FILE_INDEX_IDENTIFIER, page)
-    };
-
     Filter::new()
         .kind(Kind::Custom(FILE_INDEX_EVENT_KIND))
         .author(*pubkey)
-        .identifier(identifier)
+        .identifier(page_identifier(page))
         .limit(1)
 }
 
@@ -344,11 +364,29 @@ mod tests {
         let index = FileIndex::new();
         assert_eq!(index.get_identifier(), "nostrsave-index");
 
-        let page2 = FileIndex::new_page(2, 3);
+        let page2 = FileIndex::new_page(2, 3).unwrap();
         assert_eq!(page2.get_identifier(), "nostrsave-index-page-2");
 
-        let page5 = FileIndex::new_page(5, 10);
+        let page5 = FileIndex::new_page(5, 10).unwrap();
         assert_eq!(page5.get_identifier(), "nostrsave-index-page-5");
+    }
+
+    #[test]
+    fn test_file_index_new_page_validation() {
+        // Valid cases
+        assert!(FileIndex::new_page(1, 1).is_ok());
+        assert!(FileIndex::new_page(1, 5).is_ok());
+        assert!(FileIndex::new_page(5, 5).is_ok());
+
+        // Invalid: total_pages == 0
+        assert!(FileIndex::new_page(1, 0).is_err());
+
+        // Invalid: page == 0
+        assert!(FileIndex::new_page(0, 1).is_err());
+
+        // Invalid: page > total_pages
+        assert!(FileIndex::new_page(2, 1).is_err());
+        assert!(FileIndex::new_page(10, 5).is_err());
     }
 
     #[test]
