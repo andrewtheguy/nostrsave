@@ -70,8 +70,8 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
-        Commands::List { from_data_relays } => {
-            commands::list::execute(cli.pubkey.as_deref(), cli.key_file.as_deref(), from_data_relays, cli.verbose).await?;
+        Commands::List { from_data_relays, page } => {
+            commands::list::execute(cli.pubkey.as_deref(), cli.key_file.as_deref(), from_data_relays, page, cli.verbose).await?;
         }
         Commands::BestRelays { input, count } => {
             commands::best_relays::execute(input, count)?;

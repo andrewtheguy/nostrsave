@@ -4,8 +4,8 @@ use crate::config::{get_data_relays, get_index_relays, get_private_key, Encrypti
 use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
-    create_chunk_event, create_file_index_event, create_file_index_filter, create_manifest_event,
-    parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry,
+    create_chunk_event, create_current_index_filter, create_file_index_event, create_manifest_event,
+    parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry, MAX_ENTRIES_PER_PAGE,
 };
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -566,56 +566,232 @@ async fn publish_to_index_relays(
     Ok(manifest_event_id)
 }
 
-/// Publish file index to connected relays (used for both data and index relays)
+/// Fetch the current file index (page 1) for a user
+async fn fetch_current_index(
+    client: &Client,
+    pubkey: &PublicKey,
+    verbose: bool,
+) -> Option<FileIndex> {
+    let filter = create_current_index_filter(pubkey);
+    match client.fetch_events(filter, Duration::from_secs(10)).await {
+        Ok(events) => {
+            if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
+                match parse_file_index_event(event) {
+                    Ok(index) => {
+                        if verbose {
+                            println!(
+                                "  Found current index with {} files ({} archives)",
+                                index.len(),
+                                index.total_archives()
+                            );
+                        }
+                        Some(index)
+                    }
+                    Err(e) => {
+                        if verbose {
+                            eprintln!("  Failed to parse current index: {}", e);
+                        }
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        Err(e) => {
+            if verbose {
+                eprintln!("  Failed to fetch current index: {}", e);
+            }
+            None
+        }
+    }
+}
+
+/// Publish file index to connected relays.
+///
+/// Uses O(1) archiving: when the current index is full, its entries are moved
+/// to a new immutable archive and a fresh current index is created with just
+/// the new entry. No cascading through existing archives is needed.
+///
+/// # Consistency Notes
+///
+/// **Archive publication gap**: The archive is published before the new current index.
+/// If the current index publication fails after the archive succeeds:
+/// - The archive exists with `total_archives = N+1`
+/// - The old current index still shows `total_archives = N`
+/// - The new archive becomes "orphaned" (not reachable via pagination)
+///
+/// This is recoverable: the next successful upload will update the current index.
+/// The orphaned archive will be replaced when archiving triggers again with the
+/// same archive number. We retry the current index publication to minimize this risk.
+///
+/// **Concurrent uploads**: The fetch-then-update pattern is not atomic. If two
+/// uploads run concurrently, the later publication may overwrite entries from the
+/// earlier one. This is acceptable given Nostr's eventual consistency model and
+/// the typical single-user CLI usage pattern.
 async fn publish_file_index_to_relays(
     client: &Client,
     keys: &Keys,
     entry: FileIndexEntry,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // Fetch existing file index
-    let filter = create_file_index_filter(&keys.public_key());
-    let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
-        Ok(events) => {
-            if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
-                match parse_file_index_event(event) {
-                    Ok(existing_index) => {
-                        if verbose {
-                            println!("  Found existing index with {} files", existing_index.len());
-                        }
-                        existing_index
+    // Fetch current index only
+    let mut current = fetch_current_index(client, &keys.public_key(), verbose)
+        .await
+        .unwrap_or_else(FileIndex::new);
+
+    // Add entry (will replace if same hash exists)
+    current.add_entry(entry.clone());
+
+    // Check if archiving is needed
+    if !current.needs_archiving() {
+        // Simple case: just publish current index
+        let event_builder = create_file_index_event(&current)?;
+        client.send_event_builder(event_builder).await?;
+
+        if verbose {
+            println!("  Index updated with {} files", current.len());
+        }
+        return Ok(());
+    }
+
+    // Archiving needed - freeze current entries to a new archive
+    println!(
+        "  Index has {} files (max {}), archiving to create space...",
+        current.len(),
+        MAX_ENTRIES_PER_PAGE
+    );
+
+    let old_total_archives = current.total_archives();
+    let new_archive_number = old_total_archives + 1;
+    let new_total_archives = new_archive_number;
+
+    // Get all entries except the new one (which we'll keep in fresh current index)
+    let mut old_entries: Vec<FileIndexEntry> = current
+        .entries()
+        .iter()
+        .filter(|e| e.file_hash() != entry.file_hash())
+        .cloned()
+        .collect();
+
+    // Sort old entries by uploaded_at (oldest first for archive)
+    old_entries.sort_by_key(|e| e.uploaded_at());
+
+    // Create archive with old entries
+    let archive = FileIndex::new_archive_with_entries(old_entries, new_archive_number, new_total_archives)?;
+
+    // Create fresh current index with just the new entry
+    let new_current = FileIndex::new_with_entries(vec![entry], new_total_archives);
+
+    // Publish archive first (immutable) with retry
+    let archive_event = create_file_index_event(&archive)?;
+    let mut archive_last_error = None;
+    for attempt in 0..=MAX_RETRIES {
+        match client.send_event_builder(archive_event.clone()).await {
+            Ok(_) => {
+                archive_last_error = None;
+                break;
+            }
+            Err(e) => {
+                archive_last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    // Calculate delay with exponential backoff and jitter
+                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+                    let jitter = (SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .subsec_nanos()
+                        % 200) as u64;
+                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+
+                    if verbose {
+                        eprintln!(
+                            "  Archive {} failed (attempt {}/{}), retrying in {}ms...",
+                            new_archive_number,
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            delay
+                        );
                     }
-                    Err(e) => {
-                        if verbose {
-                            eprintln!("  Failed to parse existing index: {}", e);
-                        }
-                        FileIndex::new()
-                    }
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
-            } else {
-                if verbose {
-                    println!("  No existing index found, creating new one");
-                }
-                FileIndex::new()
             }
         }
-        Err(e) => {
-            if verbose {
-                eprintln!("  Failed to fetch existing index: {}", e);
-            }
-            FileIndex::new()
-        }
-    };
+    }
 
-    // Add entry and publish
-    index.add_entry(entry);
-
-    let event_builder = create_file_index_event(&index)?;
-    client.send_event_builder(event_builder).await?;
+    if let Some(e) = archive_last_error {
+        return Err(anyhow::anyhow!(
+            "Failed to publish archive {} after {} retries: {}",
+            new_archive_number,
+            MAX_RETRIES + 1,
+            e
+        ));
+    }
 
     if verbose {
-        println!("  Index updated with {} files", index.len());
+        println!(
+            "  Created archive {} with {} files",
+            new_archive_number,
+            archive.len()
+        );
     }
+
+    // Publish new current index with retry to minimize orphaned archive risk
+    let current_event = create_file_index_event(&new_current)?;
+    let mut last_error = None;
+    for attempt in 0..=MAX_RETRIES {
+        match client.send_event_builder(current_event.clone()).await {
+            Ok(_) => {
+                last_error = None;
+                break;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    // Calculate delay with exponential backoff and jitter
+                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+                    let jitter = (SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .subsec_nanos()
+                        % 200) as u64;
+                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+
+                    if verbose {
+                        eprintln!(
+                            "  Current index failed (attempt {}/{}), retrying in {}ms...",
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            delay
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+            }
+        }
+    }
+
+    if let Some(e) = last_error {
+        // Archive was published but current index failed - log warning
+        eprintln!(
+            "  Warning: Archive {} published but current index update failed.\n  \
+             The archive may be orphaned until the next successful upload.\n  \
+             Error: {}",
+            new_archive_number, e
+        );
+        return Err(anyhow::anyhow!(
+            "Failed to publish current index after {} retries: {}",
+            MAX_RETRIES + 1,
+            e
+        ));
+    }
+
+    println!(
+        "  Archived {} files, new index has {} file(s) ({} total pages)",
+        archive.len(),
+        new_current.len(),
+        new_current.total_pages()
+    );
 
     Ok(())
 }
