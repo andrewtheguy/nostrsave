@@ -65,7 +65,7 @@ pub enum Commands {
         #[arg(short, long, default_value = "32768", value_parser = parse_chunk_size)]
         chunk_size: usize,
 
-        /// Output manifest file path (defaults to <filename>.nostrsave)
+        /// Save manifest locally to this path (not saved by default)
         #[arg(short, long)]
         output: Option<PathBuf>,
 

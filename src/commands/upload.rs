@@ -470,9 +470,10 @@ pub async fn execute(
     )
     .await?;
 
-    // 9. Save manifest locally as backup
-    let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
-    manifest.save_to_file(&manifest_path)?;
+    // 9. Save manifest locally if requested
+    if let Some(manifest_path) = &output {
+        manifest.save_to_file(manifest_path)?;
+    }
 
     // Clean up session on success
     session.cleanup()?;
@@ -483,10 +484,14 @@ pub async fn execute(
     println!("Chunks:     {}", manifest.total_chunks);
     println!("Hash:       {}", file_hash);
     println!("Manifest:   {}", manifest_event_id);
-    println!("Local copy: {}", manifest_path.display());
+    if let Some(manifest_path) = &output {
+        println!("Local copy: {}", manifest_path.display());
+    }
     println!("\nDownload with:");
     println!("  nostrsave download --hash {}", file_hash);
-    println!("  nostrsave download {}", manifest_path.display());
+    if let Some(manifest_path) = &output {
+        println!("  nostrsave download {}", manifest_path.display());
+    }
 
     Ok(())
 }
