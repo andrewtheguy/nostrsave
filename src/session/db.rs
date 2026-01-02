@@ -1,5 +1,6 @@
+use fs2::FileExt;
 use sha2::{Digest, Sha512};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -68,4 +69,36 @@ pub fn current_timestamp() -> anyhow::Result<u64> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .map_err(|e| anyhow::anyhow!("system clock error: time is before Unix epoch ({})", e))
+}
+
+/// Acquire exclusive lock using a separate .lock file.
+/// The lock is held as long as the returned File is not dropped.
+/// Using a separate file avoids conflicts with SQLite's internal locking.
+pub fn acquire_session_lock(db_path: &Path) -> anyhow::Result<File> {
+    let lock_path = db_path.with_extension("db.lock");
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+
+    file.try_lock_exclusive().map_err(|_| {
+        anyhow::anyhow!(
+            "Another session is using this file. \
+             Wait for it to complete or delete the session."
+        )
+    })?;
+
+    Ok(file)
+}
+
+/// Remove the lock file when session is cleaned up.
+pub fn remove_session_lock(db_path: &Path) -> anyhow::Result<()> {
+    let lock_path = db_path.with_extension("db.lock");
+    if lock_path.exists() {
+        fs::remove_file(&lock_path)?;
+    }
+    Ok(())
 }

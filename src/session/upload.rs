@@ -1,8 +1,12 @@
 use crate::config::EncryptionAlgorithm;
 use rusqlite::{params, Connection};
+use std::fs::File;
 use std::path::PathBuf;
 
-use super::db::{current_timestamp, delete_session_db, session_db_path, SCHEMA_VERSION};
+use super::db::{
+    acquire_session_lock, current_timestamp, delete_session_db, remove_session_lock,
+    session_db_path, SCHEMA_VERSION,
+};
 
 const UPLOAD_PREFIX: &str = "upload";
 
@@ -22,6 +26,8 @@ pub struct UploadMeta {
 /// Upload session for tracking published chunks.
 pub struct UploadSession {
     conn: Connection,
+    #[allow(dead_code)] // Lock held for session lifetime, released on drop
+    lock: File,
     db_path: PathBuf,
     pub total_chunks: usize,
 }
@@ -41,14 +47,10 @@ impl UploadSession {
             return Err(anyhow::anyhow!("No upload session found for this file"));
         }
 
+        // Acquire file lock BEFORE opening connection
+        let lock = acquire_session_lock(&db_path)?;
+
         let conn = Connection::open(&db_path)?;
-
-        // Set exclusive locking to prevent concurrent access
-        conn.pragma_update(None, "locking_mode", "EXCLUSIVE")?;
-
-        // Try to acquire exclusive lock
-        conn.execute("BEGIN EXCLUSIVE TRANSACTION", [])?;
-        conn.execute("COMMIT", [])?;
 
         // Check schema version
         let version: u32 = conn.query_row(
@@ -74,6 +76,7 @@ impl UploadSession {
 
         Ok(Self {
             conn,
+            lock,
             db_path,
             total_chunks,
         })
@@ -83,15 +86,17 @@ impl UploadSession {
     pub fn create(meta: UploadMeta) -> anyhow::Result<Self> {
         let db_path = session_db_path(UPLOAD_PREFIX, &meta.file_hash_full)?;
 
-        // Delete any existing session
+        // Delete any existing session (both db and lock file)
         if db_path.exists() {
             std::fs::remove_file(&db_path)?;
         }
+        remove_session_lock(&db_path)?;
 
+        // Create DB file
         let conn = Connection::open(&db_path)?;
 
-        // Set exclusive locking to prevent concurrent access
-        conn.pragma_update(None, "locking_mode", "EXCLUSIVE")?;
+        // Acquire file lock
+        let lock = acquire_session_lock(&db_path)?;
 
         // Create tables
         conn.execute_batch(
@@ -144,6 +149,7 @@ impl UploadSession {
 
         Ok(Self {
             conn,
+            lock,
             db_path,
             total_chunks: meta.total_chunks,
         })
@@ -216,19 +222,29 @@ impl UploadSession {
 
     /// Delete the session database (call on successful completion).
     pub fn cleanup(self) -> anyhow::Result<()> {
-        // Close the connection by dropping it
+        let db_path = self.db_path.clone();
+
+        // Drop lock first (releases file lock)
+        drop(self.lock);
+        // Close the connection
         drop(self.conn);
 
         // Delete the database file
-        if self.db_path.exists() {
-            std::fs::remove_file(&self.db_path)?;
+        if db_path.exists() {
+            std::fs::remove_file(&db_path)?;
         }
+
+        // Delete the lock file
+        remove_session_lock(&db_path)?;
 
         Ok(())
     }
 
     /// Delete an upload session without opening it.
     pub fn delete(file_hash_full: &str) -> anyhow::Result<()> {
-        delete_session_db(UPLOAD_PREFIX, file_hash_full)
+        let db_path = session_db_path(UPLOAD_PREFIX, file_hash_full)?;
+        delete_session_db(UPLOAD_PREFIX, file_hash_full)?;
+        remove_session_lock(&db_path)?;
+        Ok(())
     }
 }
