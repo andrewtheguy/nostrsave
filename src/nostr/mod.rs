@@ -8,6 +8,7 @@ pub use events::{
 };
 
 pub use index::{
-    create_file_index_event, create_file_index_page_filter, parse_file_index_event, FileIndex,
-    FileIndexEntry, MAX_ENTRIES_PER_PAGE,
+    create_archive_filter, create_current_index_filter, create_file_index_event,
+    page_to_archive_number, parse_file_index_event, FileIndex, FileIndexEntry,
+    MAX_ENTRIES_PER_PAGE,
 };

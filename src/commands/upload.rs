@@ -4,7 +4,7 @@ use crate::config::{get_data_relays, get_index_relays, get_private_key, Encrypti
 use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
-    create_chunk_event, create_file_index_event, create_file_index_page_filter, create_manifest_event,
+    create_chunk_event, create_current_index_filter, create_file_index_event, create_manifest_event,
     parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry, MAX_ENTRIES_PER_PAGE,
 };
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
@@ -566,27 +566,30 @@ async fn publish_to_index_relays(
     Ok(manifest_event_id)
 }
 
-/// Fetch a single file index page for a user
-async fn fetch_index_page(
+/// Fetch the current file index (page 1) for a user
+async fn fetch_current_index(
     client: &Client,
     pubkey: &PublicKey,
-    page_num: u32,
     verbose: bool,
 ) -> Option<FileIndex> {
-    let filter = create_file_index_page_filter(pubkey, page_num);
+    let filter = create_current_index_filter(pubkey);
     match client.fetch_events(filter, Duration::from_secs(10)).await {
         Ok(events) => {
             if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
                 match parse_file_index_event(event) {
                     Ok(index) => {
                         if verbose {
-                            println!("  Found page {} with {} files", page_num, index.len());
+                            println!(
+                                "  Found current index with {} files ({} archives)",
+                                index.len(),
+                                index.total_archives()
+                            );
                         }
                         Some(index)
                     }
                     Err(e) => {
                         if verbose {
-                            eprintln!("  Failed to parse page {}: {}", page_num, e);
+                            eprintln!("  Failed to parse current index: {}", e);
                         }
                         None
                     }
@@ -597,148 +600,94 @@ async fn fetch_index_page(
         }
         Err(e) => {
             if verbose {
-                eprintln!("  Failed to fetch page {}: {}", page_num, e);
+                eprintln!("  Failed to fetch current index: {}", e);
             }
             None
         }
     }
 }
 
-/// Publish file index to connected relays (used for both data and index relays).
+/// Publish file index to connected relays.
 ///
-/// Pages are fetched on demand to avoid fetching thousands of pages at once.
-/// Only page 1 is fetched initially; subsequent pages are fetched only when
-/// archiving overflow cascades to them.
-///
-/// Gap handling: If a page is missing (e.g., relay deleted it), it's treated
-/// as empty and overflow entries fill the gap. Pages beyond a gap are not
-/// fetched or updated - this is acceptable since Nostr persistence is best-effort.
+/// Uses O(1) archiving: when the current index is full, its entries are moved
+/// to a new immutable archive and a fresh current index is created with just
+/// the new entry. No cascading through existing archives is needed.
 async fn publish_file_index_to_relays(
     client: &Client,
     keys: &Keys,
     entry: FileIndexEntry,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // Fetch only page 1
-    let mut page1 = fetch_index_page(client, &keys.public_key(), 1, verbose)
+    // Fetch current index only
+    let mut current = fetch_current_index(client, &keys.public_key(), verbose)
         .await
         .unwrap_or_else(FileIndex::new);
 
-    let old_total_pages = page1.total_pages();
-
-    // Add entry to page 1 (will replace if same hash exists)
-    page1.add_entry(entry);
+    // Add entry (will replace if same hash exists)
+    current.add_entry(entry.clone());
 
     // Check if archiving is needed
-    if !page1.needs_archiving() {
-        // Simple case: just publish page 1
-        let event_builder = create_file_index_event(&page1)?;
+    if !current.needs_archiving() {
+        // Simple case: just publish current index
+        let event_builder = create_file_index_event(&current)?;
         client.send_event_builder(event_builder).await?;
 
         if verbose {
-            println!("  Index updated with {} files", page1.len());
+            println!("  Index updated with {} files", current.len());
         }
         return Ok(());
     }
 
-    // Archiving needed - cascade overflow to subsequent pages
+    // Archiving needed - freeze current entries to a new archive
     println!(
-        "  Index page 1 has {} files (max {}), archiving older entries...",
-        page1.len(),
+        "  Index has {} files (max {}), archiving to create space...",
+        current.len(),
         MAX_ENTRIES_PER_PAGE
     );
 
-    // Collect page entries first (page_num -> entries), then create FileIndex objects
-    // with correct total_pages after we know the final count
-    let mut page_entries: Vec<(u32, Vec<FileIndexEntry>)> = Vec::new();
+    let old_total_archives = current.total_archives();
+    let new_archive_number = old_total_archives + 1;
+    let new_total_archives = new_archive_number;
 
-    // Process page 1: keep newest MAX entries, overflow goes to next page
-    let mut entries: Vec<FileIndexEntry> = page1.entries().to_vec();
-    // Sort by uploaded_at descending (newest first)
-    entries.sort_by_key(|e| std::cmp::Reverse(e.uploaded_at()));
+    // Get all entries except the new one (which we'll keep in fresh current index)
+    let mut old_entries: Vec<FileIndexEntry> = current
+        .entries()
+        .iter()
+        .filter(|e| e.file_hash() != entry.file_hash())
+        .cloned()
+        .collect();
 
-    let (keep, mut overflow) = if entries.len() > MAX_ENTRIES_PER_PAGE {
-        let (k, o) = entries.split_at(MAX_ENTRIES_PER_PAGE);
-        (k.to_vec(), o.to_vec())
-    } else {
-        (entries, Vec::new())
-    };
+    // Sort old entries by uploaded_at (oldest first for archive)
+    old_entries.sort_by_key(|e| e.uploaded_at());
 
-    // Current page being processed
-    let mut current_page_num = 1u32;
-    let mut current_entries = keep;
+    // Create archive with old entries
+    let archive = FileIndex::new_archive_with_entries(old_entries, new_archive_number, new_total_archives);
 
-    // Process overflow by cascading to subsequent pages
-    while !overflow.is_empty() {
-        // Fetch next page if it exists
-        let next_page_num = current_page_num + 1;
-        let next_page = fetch_index_page(client, &keys.public_key(), next_page_num, verbose).await;
+    // Create fresh current index with just the new entry
+    let new_current = FileIndex::new_with_entries(vec![entry], new_total_archives);
 
-        // Merge overflow with next page entries
-        let mut next_entries: Vec<FileIndexEntry> = if let Some(ref np) = next_page {
-            np.entries().to_vec()
-        } else {
-            Vec::new()
-        };
+    // Publish archive first (immutable, order doesn't matter but good practice)
+    let archive_event = create_file_index_event(&archive)?;
+    client.send_event_builder(archive_event).await?;
 
-        // Overflow entries are newer, so prepend them
-        overflow.append(&mut next_entries);
-        next_entries = overflow;
-
-        // Sort by uploaded_at descending
-        next_entries.sort_by_key(|e| std::cmp::Reverse(e.uploaded_at()));
-
-        // Check if this page also overflows
-        let (next_keep, next_overflow) = if next_entries.len() > MAX_ENTRIES_PER_PAGE {
-            let (k, o) = next_entries.split_at(MAX_ENTRIES_PER_PAGE);
-            (k.to_vec(), o.to_vec())
-        } else {
-            (next_entries, Vec::new())
-        };
-
-        // Save current page entries for later (will create FileIndex after knowing total)
-        page_entries.push((current_page_num, current_entries));
-
-        // Move to next page
-        current_page_num = next_page_num;
-        current_entries = next_keep;
-        overflow = next_overflow;
-    }
-
-    // Add the last page entries
-    page_entries.push((current_page_num, current_entries));
-
-    // Now we know the total pages count
-    let new_total_pages = page_entries.len() as u32;
-
-    // Report page count changes
-    if new_total_pages > old_total_pages {
+    if verbose {
         println!(
-            "  Created new archive page: now {} total pages",
-            new_total_pages
+            "  Created archive {} with {} files",
+            new_archive_number,
+            archive.len()
         );
     }
 
-    // Create and publish all pages with correct total_pages
-    for (page_num, entries) in page_entries {
-        let mut page = FileIndex::new_page(page_num, new_total_pages)?;
-        // Add entries in reverse order (oldest first within page)
-        for e in entries.into_iter().rev() {
-            page.add_entry(e);
-        }
+    // Publish new current index
+    let current_event = create_file_index_event(&new_current)?;
+    client.send_event_builder(current_event).await?;
 
-        let event_builder = create_file_index_event(&page)?;
-        client.send_event_builder(event_builder).await?;
-
-        if verbose {
-            println!(
-                "  Published page {}/{} with {} files",
-                page.page(),
-                page.total_pages(),
-                page.len()
-            );
-        }
-    }
+    println!(
+        "  Archived {} files, new index has {} file(s) ({} total pages)",
+        archive.len(),
+        new_current.len(),
+        new_current.total_pages()
+    );
 
     Ok(())
 }

@@ -1,5 +1,8 @@
 use crate::config::{get_data_relays, get_index_relays, get_private_key};
-use crate::nostr::{create_file_index_page_filter, parse_file_index_event};
+use crate::nostr::{
+    create_archive_filter, create_current_index_filter, page_to_archive_number,
+    parse_file_index_event,
+};
 use chrono::{TimeZone, Utc};
 use nostr_sdk::prelude::*;
 use std::time::Duration;
@@ -99,25 +102,16 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
     }
 
     // 3. Fetch file index
+    // Always fetch current index first to get total_archives
     println!("Fetching file index (page {})...\n", page);
-    let filter = create_file_index_page_filter(&target_pubkey, page);
 
-    let index = match client.fetch_events(filter, Duration::from_secs(10)).await {
+    let current_filter = create_current_index_filter(&target_pubkey);
+    let current_index = match client.fetch_events(current_filter, Duration::from_secs(10)).await {
         Ok(events) => {
-            // Select the most recent file index event by created_at timestamp.
-            // Multiple events may exist from different relays or prior uploads.
             if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
-                parse_file_index_event(event)?
+                Some(parse_file_index_event(event)?)
             } else {
-                if page == 1 {
-                    println!("No file index found for this public key.");
-                    println!("\nUpload files with 'nostrsave upload <file>' to create an index.");
-                } else {
-                    println!("Page {} does not exist.", page);
-                    println!("\nUse --page 1 to view the most recent files, or omit --page.");
-                }
-                client.disconnect().await;
-                return Ok(());
+                None
             }
         }
         Err(e) => {
@@ -126,16 +120,61 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
         }
     };
 
-    client.disconnect().await;
+    // If no current index exists
+    let Some(current_index) = current_index else {
+        client.disconnect().await;
+        if page == 1 {
+            println!("No file index found for this public key.");
+            println!("\nUpload files with 'nostrsave upload <file>' to create an index.");
+        } else {
+            println!("Page {} does not exist (no index found).", page);
+            println!("\nUse --page 1 to view the most recent files, or omit --page.");
+        }
+        return Ok(());
+    };
 
-    // Validate page number matches what we fetched
-    if index.page() != page {
-        println!(
-            "Warning: Requested page {} but received page {}. The index may be out of sync.",
-            page,
-            index.page()
-        );
-    }
+    // Now fetch the requested page
+    let index = if page == 1 {
+        // Page 1 is the current index we already have
+        current_index
+    } else {
+        // Need to fetch an archive
+        let total_archives = current_index.total_archives();
+
+        match page_to_archive_number(page, total_archives) {
+            Some(archive_number) => {
+                let archive_filter = create_archive_filter(&target_pubkey, archive_number);
+                match client.fetch_events(archive_filter, Duration::from_secs(10)).await {
+                    Ok(events) => {
+                        if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
+                            parse_file_index_event(event)?
+                        } else {
+                            client.disconnect().await;
+                            println!("Page {} (archive {}) not found on relays.", page, archive_number);
+                            println!("\nThe archive may have been deleted. Use --page 1 for recent files.");
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => {
+                        client.disconnect().await;
+                        return Err(anyhow::anyhow!("Failed to fetch archive: {}", e));
+                    }
+                }
+            }
+            None => {
+                client.disconnect().await;
+                println!(
+                    "Page {} does not exist. Total pages: {}",
+                    page,
+                    current_index.total_pages()
+                );
+                println!("\nUse --page 1 to view the most recent files, or omit --page.");
+                return Ok(());
+            }
+        }
+    };
+
+    client.disconnect().await;
 
     // 4. Display results
     if index.is_empty() {
