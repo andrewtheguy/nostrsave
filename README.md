@@ -46,7 +46,7 @@ nostrsave upload photo.jpg --key-file nostr.key --encryption none
 nostrsave list --key-file ~/.config/nostrsave/nostr.key
 
 # Download a file by hash (decrypts automatically)
-nostrsave download --hash sha256:abc123... --key-file ~/.config/nostrsave/nostr.key
+nostrsave download sha256:abc123... --key-file ~/.config/nostrsave/nostr.key
 ```
 
 ## Configuration
@@ -104,7 +104,7 @@ nostrsave upload <FILE> [OPTIONS]
 
 Options:
   -c, --chunk-size <BYTES>       Chunk size (1KB-65408 tested max, default: 32KB)
-  -o, --output <PATH>            Output manifest file path
+  -o, --output <PATH>            Save manifest locally to this path (not saved by default)
   -e, --encryption <ALGORITHM>   Encryption: nip44 (default) or none
   -f, --force                    Force delete corrupted session without prompting
   -v, --verbose                  Verbose output
@@ -117,14 +117,14 @@ Uploads automatically resume from the last successful chunk if interrupted. Sess
 Download a file from Nostr relays. Encrypted files are automatically decrypted.
 
 ```bash
-nostrsave download <MANIFEST> [OPTIONS]
-nostrsave download --hash <HASH> [OPTIONS]
+nostrsave download <HASH> [OPTIONS]
+nostrsave download --manifest <PATH> [OPTIONS]
 
 Options:
-  --hash <HASH>        File hash to fetch from relays
-  -o, --output <PATH>  Output file path
-  --stats              Show relay statistics
-  -v, --verbose        Verbose output
+  -m, --manifest <PATH>  Load manifest from local file instead of fetching by hash
+  -o, --output <PATH>    Output file path
+  --stats                Show relay statistics
+  -v, --verbose          Verbose output
 ```
 
 Downloads automatically resume from the last successful chunk if interrupted. Session data is stored in a temporary SQLite database.

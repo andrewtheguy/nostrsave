@@ -133,6 +133,9 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
         return Ok(());
     };
 
+    // Use current index for total_pages (archives may have stale values)
+    let total_pages = current_index.total_pages();
+
     // Now fetch the requested page
     let index = if page == 1 {
         // Page 1 is the current index we already have
@@ -167,7 +170,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
                 println!(
                     "Page {} does not exist. Total pages: {}",
                     page,
-                    current_index.total_pages()
+                    total_pages
                 );
                 println!("\nUse --page 1 to view the most recent files, or omit --page.");
                 return Ok(());
@@ -184,11 +187,11 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
         return Ok(());
     }
 
-    // Show page info
+    // Show page info (use total_pages from current index, not archive's stale value)
     println!(
         "Page {}/{} ({} files on this page):\n",
-        index.page(),
-        index.total_pages(),
+        page,
+        total_pages,
         index.len()
     );
     println!(
@@ -233,20 +236,14 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
 
     println!("\nDownload with: nostrsave download <hash>");
 
-    // Show pagination hints
-    if index.total_pages() > 1 {
+    // Show pagination hints (use total_pages from current index)
+    if total_pages > 1 {
         println!();
-        if index.page() < index.total_pages() {
-            println!(
-                "Use --page {} to view older files",
-                index.page() + 1
-            );
+        if page < total_pages {
+            println!("Use --page {} to view older files", page + 1);
         }
-        if index.page() > 1 {
-            println!(
-                "Use --page {} to view newer files",
-                index.page() - 1
-            );
+        if page > 1 {
+            println!("Use --page {} to view newer files", page - 1);
         }
     }
 
