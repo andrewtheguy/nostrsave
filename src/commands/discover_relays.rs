@@ -166,5 +166,11 @@ pub async fn execute(
 
     println!("Saved to: {}", output.display());
 
+    // Suggest next step
+    println!(
+        "\nTo get the best relays for your config:\n  nostrsave best-relays {}",
+        output.display()
+    );
+
     Ok(())
 }
