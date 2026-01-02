@@ -448,10 +448,8 @@ mod tests {
     }
 
     #[test]
-    fn test_file_index_page_mapping() {
+    fn test_file_index_identifiers_and_counts() {
         // With 3 archives, total_pages = 4 (1 current + 3 archives)
-        // Page mapping is handled by page_to_archive_number() - see test_page_to_archive_number
-
         let current = FileIndex::new_with_entries(vec![], 3);
         assert_eq!(current.total_pages(), 4);
         assert_eq!(current.total_archives(), 3);

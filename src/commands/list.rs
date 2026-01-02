@@ -170,7 +170,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
                 println!(
                     "Page {} does not exist. Total pages: {}",
                     page,
-                    current_index.total_pages()
+                    total_pages
                 );
                 println!("\nUse --page 1 to view the most recent files, or omit --page.");
                 return Ok(());
