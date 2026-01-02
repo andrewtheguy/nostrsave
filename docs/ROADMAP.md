@@ -27,7 +27,18 @@ A web page for downloading files without the CLI:
 - Download assembled file
 - Could be hosted on IPFS or as a static site
 
-### Rotating Data Relay Mode
+### Relay Discovery Cache
+Cache discovered relay test results in a persistent SQLite database for faster relay selection and usage tracking:
+- Store relay URLs with test results (latency, can_write, can_read, round_trip_ms)
+- Include timestamps for cache expiration (e.g., 24-hour TTL)
+- Store in `~/.config/nostrsave/relay_cache.db`
+- Skip re-testing recently validated relays during `discover-relays`
+- Provide `--force-refresh` flag to ignore cache
+- Track relay usage counts and last-used timestamps for rotation
+- Enable smarter relay selection based on historical performance
+- Could track success/failure rates over time for reliability scoring
+
+### Rotating Data Relay Mode (depends on Relay Discovery Cache)
 Configure a large pool of data relays and rotate through them during uploads:
 - Config specifies a pool of candidate relays
 - Each upload session selects a subset of relays from the pool
