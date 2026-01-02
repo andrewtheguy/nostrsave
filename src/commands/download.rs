@@ -159,7 +159,7 @@ pub async fn execute(
         fetch_manifest_from_relays(&hash, &relay_list, verbose).await?
     } else {
         return Err(anyhow::anyhow!(
-            "Either manifest file or --hash is required"
+            "Either hash or --manifest is required"
         ));
     };
 

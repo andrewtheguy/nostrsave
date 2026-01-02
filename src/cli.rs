@@ -1,5 +1,5 @@
 use crate::config::EncryptionAlgorithm;
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 /// Minimum chunk size (1 KB)
@@ -79,15 +79,14 @@ pub enum Commands {
     },
 
     /// Download a file from Nostr relays
-    #[command(group(ArgGroup::new("input").required(true).args(["manifest", "hash"])))]
     Download {
-        /// Path to local manifest file
-        #[arg(value_name = "MANIFEST", group = "input")]
-        manifest: Option<PathBuf>,
-
         /// File hash to fetch manifest from relays (e.g., sha256:abc123...)
-        #[arg(long, group = "input")]
+        #[arg(value_name = "HASH", required_unless_present = "manifest")]
         hash: Option<String>,
+
+        /// Load manifest from local file instead of fetching by hash
+        #[arg(short, long, conflicts_with = "hash")]
+        manifest: Option<PathBuf>,
 
         /// Output file path (defaults to original filename)
         #[arg(short, long)]
