@@ -488,9 +488,9 @@ pub async fn execute(
         println!("Local copy: {}", manifest_path.display());
     }
     println!("\nDownload with:");
-    println!("  nostrsave download --hash {}", file_hash);
+    println!("  nostrsave download {}", file_hash);
     if let Some(manifest_path) = &output {
-        println!("  nostrsave download {}", manifest_path.display());
+        println!("  nostrsave download --manifest {}", manifest_path.display());
     }
 
     Ok(())

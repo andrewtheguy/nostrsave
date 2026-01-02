@@ -231,7 +231,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
         println!("  #{}: {}", i + 1, entry.file_hash());
     }
 
-    println!("\nDownload with: nostrsave download --hash <hash>");
+    println!("\nDownload with: nostrsave download <hash>");
 
     // Show pagination hints
     if index.total_pages() > 1 {
