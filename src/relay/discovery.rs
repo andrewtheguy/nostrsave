@@ -1,4 +1,6 @@
+use crate::config::EncryptionAlgorithm;
 use crate::crypto;
+use crate::nostr::{create_chunk_event, ChunkMetadata};
 use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
 use rand::Rng;
@@ -103,7 +105,6 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     let connect_latency = start.elapsed().as_millis() as u64;
 
     // Generate test payload with random data
-    let test_id = format!("test-{}", rand_hex(16));
     let mut test_data = vec![0u8; chunk_size];
     rand::thread_rng().fill(&mut test_data[..]);
     let test_hash = format!("sha256:{}", hex::encode(Sha256::digest(&test_data)));
@@ -123,19 +124,35 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
         }
     };
 
-    // Create a test chunk event with encrypted content
-    let tags = vec![
-        Tag::custom(TagKind::Custom("d".into()), vec![test_id.clone()]),
-        Tag::custom(TagKind::Custom("x".into()), vec![test_hash.clone()]),
-        Tag::custom(TagKind::Custom("chunk".into()), vec!["0".to_string()]),
-        Tag::custom(TagKind::Custom("encrypted".into()), vec!["true".to_string()]),
-    ];
+    // Create a test chunk event with the same structure as production uploads
+    let metadata = ChunkMetadata {
+        file_hash: &test_hash,
+        chunk_index: 0,
+        total_chunks: 1,
+        chunk_hash: &test_hash,
+        chunk_data: &test_data,
+        filename: "nostrsave-relay-test",
+        encryption: EncryptionAlgorithm::Nip44,
+    };
+    let d_tag = format!("{}:{}", test_hash, metadata.chunk_index);
+    let builder = match create_chunk_event(&metadata, &encrypted_content) {
+        Ok(builder) => builder,
+        Err(e) => {
+            client.disconnect().await;
+            return RelayTestResult {
+                connected: true,
+                latency_ms: Some(connect_latency),
+                payload_size: chunk_size,
+                error: Some(format!("Failed to build chunk event: {}", e)),
+                ..base_result
+            };
+        }
+    };
 
     let round_trip_start = Instant::now();
 
     // Publish test event with NIP-44 encrypted payload
     let can_write = match tokio::time::timeout(timeout, async {
-        let builder = EventBuilder::new(Kind::Custom(TEST_CHUNK_KIND), &encrypted_content).tags(tags);
         client.send_event_builder(builder).await
     })
     .await
@@ -170,7 +187,7 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     let filter = Filter::new()
         .kind(Kind::Custom(TEST_CHUNK_KIND))
         .author(keys.public_key())
-        .identifier(test_id.clone())
+        .identifier(d_tag.clone())
         .limit(1);
 
     let (can_read, error) = match client.fetch_events(filter, timeout).await {
@@ -210,13 +227,6 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     }
 }
 
-/// Generate random hex string using cryptographically secure RNG
-fn rand_hex(len: usize) -> String {
-    // Use nostr_sdk's key generation which uses a secure RNG
-    let keys = Keys::generate();
-    let secret_bytes = keys.secret_key().as_secret_bytes();
-    hex::encode(&secret_bytes[..len.min(32)])
-}
 
 /// Test multiple relays concurrently with chunk-sized payload
 pub async fn test_relays_concurrent(
