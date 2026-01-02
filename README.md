@@ -5,6 +5,7 @@ A CLI tool for storing and retrieving files on the Nostr network.
 ## Features
 
 - **NIP-44 encryption** enabled by default (self-encrypt to own public key)
+- **Resumable uploads/downloads** with SQLite-based session tracking
 - **Upload files** to Nostr relays as chunked events
 - **Download files** using file hash or local manifest
 - **File index** automatically maintained on your public key
@@ -105,8 +106,11 @@ Options:
   -c, --chunk-size <BYTES>       Chunk size (1KB-65408 tested max, default: 32KB)
   -o, --output <PATH>            Output manifest file path
   -e, --encryption <ALGORITHM>   Encryption: nip44 (default) or none
+  -f, --force                    Force delete corrupted session without prompting
   -v, --verbose                  Verbose output
 ```
+
+Uploads automatically resume from the last successful chunk if interrupted. Session data is stored in a temporary SQLite database.
 
 ### download
 
@@ -122,6 +126,8 @@ Options:
   --stats              Show relay statistics
   -v, --verbose        Verbose output
 ```
+
+Downloads automatically resume from the last successful chunk if interrupted. Session data is stored in a temporary SQLite database.
 
 ### list
 
@@ -175,6 +181,23 @@ nostrsave discover-relays
 nostrsave best-relays -c 10
 # Copy output to config.toml [relays] section
 ```
+
+## Resumable Sessions
+
+Uploads and downloads are automatically resumable. If a transfer is interrupted (network failure, Ctrl+C, crash), simply run the same command again to resume from where it left off.
+
+**How it works:**
+- Session state is tracked in SQLite databases in your system's temp directory
+- Each file gets a unique session identified by its SHA-512 hash
+- Upload sessions track which chunks have been published
+- Download sessions store received chunks until all are collected
+- Sessions are automatically cleaned up on successful completion
+
+**Session files location:** `$TMPDIR/nostrsave-sessions/` (e.g., `/tmp/nostrsave-sessions/`)
+
+**Concurrency protection:** Sessions use OS-level file locks to prevent concurrent access. If you see "Another session is using this file", wait for the other process to complete.
+
+**Corrupted sessions:** If a session becomes corrupted, the upload command will prompt for confirmation before deleting it. Use `--force` to skip the prompt.
 
 ## How It Works
 

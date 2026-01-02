@@ -1,71 +1,47 @@
 # Architecture
 
-## Project Structure
-
-```
-src/
-├── main.rs              # Entry point, CLI argument handling
-├── cli.rs               # Clap command definitions
-├── config.rs            # TOML config, relay loading, constants
-├── crypto.rs            # NIP-44 encryption/decryption
-├── error.rs             # Error types
-├── manifest.rs          # Manifest structure and serialization
-├── commands/
-│   ├── mod.rs
-│   ├── upload.rs        # Upload command implementation
-│   ├── download.rs      # Download command implementation
-│   ├── list.rs          # List command implementation
-│   ├── discover_relays.rs  # Relay discovery command
-│   └── best_relays.rs   # Best relays command
-├── chunking/
-│   ├── mod.rs
-│   ├── splitter.rs      # File chunking logic
-│   └── assembler.rs     # Chunk reassembly logic
-├── nostr/
-│   ├── mod.rs
-│   ├── events.rs        # Event creation and parsing
-│   └── index.rs         # File index event handling
-└── relay/
-    ├── mod.rs
-    └── discovery.rs     # Relay discovery and testing
-```
-
 ## Data Flow
 
 ### Upload Flow
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│  Read File  │────▶│ Split Chunks │────▶│ Encrypt (NIP-44)│
+│  Read File  │────▶│ Compute Hash │────▶│ Create/Resume   │
+│             │     │ (SHA-512)    │     │ Upload Session  │
 └─────────────┘     └──────────────┘     └─────────────────┘
                                                   │
                                                   ▼
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Save Local  │◀────│ Publish      │◀────│ Sign & Publish  │
-│ Manifest    │     │ Manifest     │     │ Chunk Events    │
+│ Split into  │────▶│ Encrypt      │────▶│ Publish Chunk   │
+│ Chunks      │     │ (NIP-44)     │     │ (skip if done)  │
 └─────────────┘     └──────────────┘     └─────────────────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │ Update File  │
-                    │ Index        │
-                    └──────────────┘
+                                                  │
+                                                  ▼
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
+│ Cleanup     │◀────│ Update File  │◀────│ Publish         │
+│ Session     │     │ Index        │     │ Manifest        │
+└─────────────┘     └──────────────┘     └─────────────────┘
 ```
+
+The upload session tracks which chunks have been successfully published. If interrupted, re-running the command skips already-published chunks.
 
 ### Download Flow
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Load/Fetch  │────▶│ Query Relays │────▶│ Collect Chunks  │
-│ Manifest    │     │ for Chunks   │     │                 │
+│ Load/Fetch  │────▶│ Create/Resume│────▶│ Query Missing   │
+│ Manifest    │     │ Download     │     │ Chunks from     │
+│             │     │ Session      │     │ Relays          │
 └─────────────┘     └──────────────┘     └─────────────────┘
                                                   │
                                                   ▼
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Write File  │◀────│ Verify Hash  │◀────│ Decrypt (NIP-44)│
-│             │     │              │     │ & Reassemble    │
+│ Cleanup     │◀────│ Write File   │◀────│ Decrypt, Verify │
+│ Session     │     │ (atomic)     │     │ & Store Chunks  │
 └─────────────┘     └──────────────┘     └─────────────────┘
 ```
+
+The download session stores received chunks in SQLite. If interrupted, re-running the command only fetches missing chunks. File assembly happens atomically after all chunks are collected.
 
 ## Nostr Event Structure
 
@@ -279,6 +255,102 @@ nostrsave best-relays relays.json --count 5
 - Chunk hashes verified on download (against original unencrypted data)
 - File hash verified after reassembly
 
+## Session Management
+
+Uploads and downloads use SQLite databases to track progress, enabling resumability after interruptions.
+
+### Session Storage
+
+```
+$TMPDIR/nostrsave-sessions/
+├── upload_<hash>.db       # Upload session database
+├── upload_<hash>.db.lock  # Upload session lock file
+├── download_<hash>.db     # Download session database
+└── download_<hash>.db.lock # Download session lock file
+```
+
+- **Location:** System temp directory (`/tmp/nostrsave-sessions/` on Linux/macOS)
+- **Naming:** First 32 characters of file's SHA-512 hash
+- **Lifetime:** Automatically deleted on successful completion
+
+### Upload Session Schema
+
+```sql
+CREATE TABLE session_meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    file_hash TEXT NOT NULL,
+    file_hash_full TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    chunk_size INTEGER NOT NULL,
+    total_chunks INTEGER NOT NULL,
+    pubkey TEXT NOT NULL,
+    encryption TEXT NOT NULL,
+    relays TEXT NOT NULL,          -- JSON array
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE published_chunks (
+    chunk_index INTEGER PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    chunk_hash TEXT NOT NULL,
+    published_at INTEGER NOT NULL
+);
+```
+
+### Download Session Schema
+
+```sql
+CREATE TABLE session_meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version INTEGER NOT NULL,
+    file_hash TEXT NOT NULL,
+    file_hash_full TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    total_chunks INTEGER NOT NULL,
+    encryption TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    output_path TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE downloaded_chunks (
+    chunk_index INTEGER PRIMARY KEY,
+    data BLOB NOT NULL,            -- Decrypted chunk data
+    chunk_hash TEXT NOT NULL,
+    downloaded_at INTEGER NOT NULL
+);
+```
+
+### Concurrency Control
+
+Sessions use OS-level advisory file locks via the `fs2` crate:
+
+1. **Lock file:** Separate `.db.lock` file (avoids SQLite locking conflicts)
+2. **Exclusive access:** `try_lock_exclusive()` fails immediately if locked
+3. **Lock lifetime:** Held for duration of session object
+4. **Ordering:** Lock acquired before any database operations
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  Session Lifecycle                       │
+├─────────────────────────────────────────────────────────┤
+│ 1. Acquire exclusive lock on .db.lock file              │
+│ 2. Open/create SQLite database                          │
+│ 3. Perform operations (track chunks)                    │
+│ 4. On success: delete DB, release lock, delete lockfile │
+│ 5. On failure: release lock (DB persists for resume)    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Error Handling
+
+- **Transient errors** (lock contention, I/O): Retry with delay
+- **Corruption errors** (schema mismatch, invalid data): Prompt user to delete
+- **`--force` flag:** Skip confirmation prompt for corrupted sessions
+
 ## Dependencies
 
 | Crate | Purpose |
@@ -288,9 +360,10 @@ nostrsave best-relays relays.json --count 5
 | tokio | Async runtime |
 | serde/serde_json | JSON serialization |
 | toml | TOML config parsing |
-| sha2 | SHA-256 hashing |
+| sha2 | SHA-256/SHA-512 hashing |
 | base64 | Binary encoding |
 | indicatif | Progress bars |
 | reqwest | HTTP client for relay discovery |
 | dirs | Platform config directories |
-| chacha20 | NIP-44 encryption (via nostr-sdk) |
+| rusqlite | SQLite database for session tracking |
+| fs2 | OS-level file locking for concurrency control |
