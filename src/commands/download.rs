@@ -5,8 +5,10 @@ use crate::nostr::{
     create_chunk_filter, create_chunk_filter_for_indices, create_manifest_filter,
     parse_chunk_event, parse_manifest_event,
 };
+use crate::session::{compute_hash_sha512, DownloadMeta, DownloadSession};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -206,6 +208,60 @@ pub async fn execute(
         None
     };
 
+    // 3. Check for existing download session
+    let file_hash_full = compute_hash_sha512(&manifest.file_hash);
+    let session_exists = DownloadSession::exists(&file_hash_full)?;
+    let mut resuming = false;
+
+    if session_exists {
+        match DownloadSession::open(&file_hash_full) {
+            Ok(existing_session) => {
+                let downloaded = existing_session.get_downloaded_count()?;
+                let total = existing_session.total_chunks;
+                drop(existing_session); // Release the lock
+
+                print!(
+                    "Resume interrupted download? ({}/{} chunks) [Y/n] ",
+                    downloaded, total
+                );
+                io::stdout().flush()?;
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+
+                let input = input.trim().to_lowercase();
+                if input.is_empty() || input == "y" || input == "yes" {
+                    resuming = true;
+                } else {
+                    println!("Starting fresh download...");
+                    DownloadSession::delete(&file_hash_full)?;
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not open existing session: {}", e);
+                eprintln!("Starting fresh download...");
+                DownloadSession::delete(&file_hash_full)?;
+            }
+        }
+    }
+
+    // 4. Create or resume download session
+    let session = if resuming {
+        DownloadSession::open(&file_hash_full)?
+    } else {
+        let meta = DownloadMeta {
+            file_hash: manifest.file_hash.clone(),
+            file_hash_full: file_hash_full.clone(),
+            file_name: manifest.file_name.clone(),
+            file_size: manifest.file_size,
+            total_chunks: manifest.total_chunks,
+            encryption: manifest.encryption,
+            manifest: manifest.clone(),
+            output_path: output_path.clone(),
+        };
+        DownloadSession::create(meta)?
+    };
+
     // Use random keys for relay connection (read-only access)
     let client_keys = Keys::generate();
 
@@ -226,8 +282,16 @@ pub async fn execute(
         ..Default::default()
     };
 
-    // 3. Fetch chunks from each relay individually for stats
-    let mut all_chunks: HashMap<usize, Vec<u8>> = HashMap::new();
+    // 5. Fetch chunks from each relay individually for stats
+    // Get already-downloaded chunks count for progress bar
+    let already_downloaded = session.get_downloaded_count()?;
+    if already_downloaded > 0 {
+        println!(
+            "Resuming: {}/{} chunks already downloaded",
+            already_downloaded,
+            manifest.total_chunks
+        );
+    }
 
     // Set up progress bar for chunk retrieval
     let pb = ProgressBar::new(manifest.total_chunks as u64);
@@ -238,12 +302,11 @@ pub async fn execute(
     );
     pb.set_message("starting...");
     pb.enable_steady_tick(Duration::from_millis(100));
+    pb.set_position(already_downloaded as u64);
 
     for (relay_idx, relay_url) in relay_list.iter().enumerate() {
-        // Calculate missing chunks at start of each iteration
-        let missing_indices: Vec<usize> = (0..manifest.total_chunks)
-            .filter(|i| !all_chunks.contains_key(i))
-            .collect();
+        // Calculate missing chunks at start of each iteration from session
+        let missing_indices = session.get_missing_indices()?;
 
         // Exit early if no missing chunks
         if missing_indices.is_empty() {
@@ -305,11 +368,14 @@ pub async fn execute(
                             Ok(chunk_data) => {
                                 relay_stat.chunks_found.insert(chunk_data.index);
 
-                                // Only store if we don't have this chunk yet
-                                if let std::collections::hash_map::Entry::Vacant(e) = all_chunks.entry(chunk_data.index) {
-                                    e.insert(chunk_data.data);
-                                    pb.set_position(all_chunks.len() as u64);
-                                }
+                                // Compute chunk hash
+                                let mut hasher = Sha256::new();
+                                hasher.update(&chunk_data.data);
+                                let chunk_hash = format!("sha256:{}", hex::encode(hasher.finalize()));
+
+                                // Store in session (idempotent - INSERT OR REPLACE)
+                                session.store_chunk(chunk_data.index, &chunk_data.data, &chunk_hash)?;
+                                pb.set_position(session.get_downloaded_count()? as u64);
                             }
                             Err(e) => {
                                 if verbose {
@@ -342,12 +408,11 @@ pub async fn execute(
     }
 
     pb.finish_and_clear();
-    println!("Retrieved {}/{} chunks\n", all_chunks.len(), manifest.total_chunks);
+    let downloaded_count = session.get_downloaded_count()?;
+    println!("Retrieved {}/{} chunks\n", downloaded_count, manifest.total_chunks);
 
-    // 4. Check for missing chunks
-    let missing: Vec<usize> = (0..manifest.total_chunks)
-        .filter(|i| !all_chunks.contains_key(i))
-        .collect();
+    // 6. Check for missing chunks
+    let missing = session.get_missing_indices()?;
 
     if !missing.is_empty() {
         println!("\nERROR: Missing {} chunks: {:?}", missing.len(), missing);
@@ -360,7 +425,7 @@ pub async fn execute(
         ));
     }
 
-    // 5. Reassemble file
+    // 7. Reassemble file from session data
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
@@ -368,6 +433,7 @@ pub async fn execute(
     );
     spinner.enable_steady_tick(Duration::from_millis(100));
 
+    let all_chunks = session.get_all_chunks()?;
     let assembler = FileAssembler::new();
     assembler.assemble(&all_chunks, manifest.total_chunks, &output_path)?;
     spinner.finish_and_clear();
@@ -385,13 +451,16 @@ pub async fn execute(
         println!("File hash verified successfully!");
     }
 
+    // Clean up session on success
+    session.cleanup()?;
+
     println!("\n=== Download Summary ===");
     println!("File:   {}", output_path.display());
     println!("Size:   {} bytes", manifest.file_size);
-    println!("Chunks: {}/{}", all_chunks.len(), manifest.total_chunks);
+    println!("Chunks: {}/{}", downloaded_count, manifest.total_chunks);
     println!("Hash:   {} ({})", computed_hash, if computed_hash == manifest.file_hash { "OK" } else { "MISMATCH" });
 
-    // 7. Show relay stats if requested
+    // 8. Show relay stats if requested
     if show_stats {
         stats.print_report();
     }

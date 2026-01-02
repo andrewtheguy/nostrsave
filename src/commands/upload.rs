@@ -7,8 +7,10 @@ use crate::nostr::{
     create_chunk_event, create_file_index_event, create_file_index_filter, create_manifest_event,
     parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry,
 };
+use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
 use indicatif::{ProgressBar, ProgressStyle};
 use nostr_sdk::prelude::*;
+use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -20,12 +22,64 @@ const BASE_RETRY_DELAY_MS: u64 = 500;
 /// Maximum delay cap for retries
 const MAX_RETRY_DELAY_MS: u64 = 5000;
 
+/// Maximum number of retry attempts for opening session database
+const SESSION_OPEN_RETRIES: u32 = 3;
+/// Delay between session open retries in milliseconds
+const SESSION_RETRY_DELAY_MS: u64 = 200;
+
+/// Classify whether an error is likely transient (worth retrying) or irrecoverable.
+/// Returns true if the error appears transient (I/O, lock contention, etc.)
+fn is_transient_error(err: &anyhow::Error) -> bool {
+    let err_str = err.to_string().to_lowercase();
+
+    // SQLite transient errors
+    if err_str.contains("database is locked")
+        || err_str.contains("sqlite_busy")
+        || err_str.contains("unable to open database")
+        || err_str.contains("disk i/o error")
+    {
+        return true;
+    }
+
+    // General I/O transient errors
+    if err_str.contains("resource temporarily unavailable")
+        || err_str.contains("interrupted")
+        || err_str.contains("would block")
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Classify whether an error indicates irrecoverable corruption.
+fn is_corruption_error(err: &anyhow::Error) -> bool {
+    let err_str = err.to_string().to_lowercase();
+
+    // Schema version mismatch is recoverable by deletion
+    if err_str.contains("schema version mismatch") {
+        return true;
+    }
+
+    // SQLite corruption
+    if err_str.contains("database disk image is malformed")
+        || err_str.contains("database is corrupt")
+        || err_str.contains("sqlite_corrupt")
+        || err_str.contains("file is not a database")
+    {
+        return true;
+    }
+
+    false
+}
+
 pub async fn execute(
     file: PathBuf,
     chunk_size: usize,
     output: Option<PathBuf>,
     key_file: Option<&str>,
     encryption: EncryptionAlgorithm,
+    force: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // 1. Load config - private key and relays
@@ -57,16 +111,123 @@ pub async fn execute(
         }
     }
 
+    // Non-UTF-8 file names are rejected
     let file_name = file
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?
-        .to_string_lossy()
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("File name contains invalid UTF-8"))?
         .to_string();
     let file_size = std::fs::metadata(&file)?.len();
 
     println!("File: {} ({} bytes)", file_name, file_size);
 
-    // 4. Split file into chunks
+    // 4. Compute SHA512 for session tracking and split file into chunks
+    println!("Computing file hash...");
+    let file_hash_full = compute_file_sha512(&file)?;
+
+    // Check for existing session
+    let session_exists = UploadSession::exists(&file_hash_full)?;
+    let mut resuming = false;
+
+    if session_exists {
+        // Try to open session with retry logic for transient errors
+        let mut last_error: Option<anyhow::Error> = None;
+        let mut session_opened = false;
+
+        for attempt in 0..=SESSION_OPEN_RETRIES {
+            match UploadSession::open(&file_hash_full) {
+                Ok(existing_session) => {
+                    let published = existing_session.get_published_count()?;
+                    let total = existing_session.total_chunks;
+                    drop(existing_session); // Release the lock
+
+                    print!(
+                        "Resume interrupted upload? ({}/{} chunks done) [Y/n] ",
+                        published, total
+                    );
+                    io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+
+                    let input = input.trim().to_lowercase();
+                    if input.is_empty() || input == "y" || input == "yes" {
+                        resuming = true;
+                    } else {
+                        println!("Starting fresh upload...");
+                        UploadSession::delete(&file_hash_full)?;
+                    }
+                    session_opened = true;
+                    break;
+                }
+                Err(e) => {
+                    // Check if error is transient and worth retrying
+                    if is_transient_error(&e) && attempt < SESSION_OPEN_RETRIES {
+                        if verbose {
+                            eprintln!(
+                                "Session open failed (attempt {}/{}): {}",
+                                attempt + 1,
+                                SESSION_OPEN_RETRIES + 1,
+                                e
+                            );
+                            eprintln!("Retrying in {}ms...", SESSION_RETRY_DELAY_MS);
+                        }
+                        tokio::time::sleep(Duration::from_millis(SESSION_RETRY_DELAY_MS)).await;
+                        last_error = Some(e);
+                        continue;
+                    }
+                    last_error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        // Handle session open failure after retries
+        if !session_opened {
+            if let Some(e) = last_error {
+                eprintln!("Error: Could not open existing session after {} attempts", SESSION_OPEN_RETRIES + 1);
+                eprintln!("Details: {}", e);
+                eprintln!("Full error chain: {:?}", e);
+
+                // Check if this is a corruption error that requires deletion
+                if is_corruption_error(&e) {
+                    eprintln!("\nThe session database appears to be corrupted or incompatible.");
+
+                    if force {
+                        eprintln!("--force specified, deleting corrupted session...");
+                        UploadSession::delete(&file_hash_full)?;
+                    } else {
+                        print!("Delete corrupted session and start fresh? [y/N] ");
+                        io::stdout().flush()?;
+
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+
+                        let input = input.trim().to_lowercase();
+                        if input == "y" || input == "yes" {
+                            println!("Deleting corrupted session...");
+                            UploadSession::delete(&file_hash_full)?;
+                        } else {
+                            return Err(anyhow::anyhow!(
+                                "Session corrupted. Use --force to delete, or manually remove the session file."
+                            ));
+                        }
+                    }
+                } else {
+                    // Non-corruption error after retries exhausted
+                    return Err(anyhow::anyhow!(
+                        "Failed to open session after {} retries: {}. \
+                         If another process is using this session, wait and retry. \
+                         Use --force to delete the session and start fresh.",
+                        SESSION_OPEN_RETRIES + 1,
+                        e
+                    ));
+                }
+            }
+        }
+    }
+
     println!("Splitting file into chunks...");
     let chunker = FileChunker::new(chunk_size)?;
     let (file_hash, chunks) = chunker.split_file(&file)?;
@@ -144,7 +305,37 @@ pub async fn execute(
 
     println!("Encryption: {}", encryption);
 
-    // 6. Publish chunks with progress
+    // 6. Create or resume upload session
+    let session = if resuming {
+        UploadSession::open(&file_hash_full)?
+    } else {
+        let meta = UploadMeta {
+            file_path: file.clone(),
+            file_hash: file_hash.clone(),
+            file_hash_full: file_hash_full.clone(),
+            file_size,
+            chunk_size,
+            total_chunks: chunks.len(),
+            pubkey: keys.public_key().to_bech32()?,
+            encryption,
+            relays: data_relays.clone(),
+        };
+        UploadSession::create(meta)?
+    };
+
+    // Get chunks that still need to be published
+    let unpublished: HashSet<usize> = session.get_unpublished_indices()?.into_iter().collect();
+    let already_published = chunks.len() - unpublished.len();
+
+    if already_published > 0 {
+        println!(
+            "Resuming: {}/{} chunks already published",
+            already_published,
+            chunks.len()
+        );
+    }
+
+    // 7. Publish chunks with progress
     println!("\nUploading {} chunks...", chunks.len());
     let pb = ProgressBar::new(chunks.len() as u64);
     pb.set_style(
@@ -153,7 +344,14 @@ pub async fn execute(
             .progress_chars("#>-"),
     );
 
+    // Set progress to already published count
+    pb.set_position(already_published as u64);
+
     for chunk in &chunks {
+        // Skip already published chunks
+        if !unpublished.contains(&chunk.index) {
+            continue;
+        }
         // Prepare content: encrypt or base64-encode
         let content = if encryption == EncryptionAlgorithm::Nip44 {
             crypto::encrypt_chunk(&keys, &chunk.data)?
@@ -182,7 +380,8 @@ pub async fn execute(
                     if verbose {
                         println!("  Chunk {} -> {}", chunk.index, event_id);
                     }
-                    manifest.add_chunk(chunk.index, event_id, chunk.hash.clone())?;
+                    // Record in session for resumability
+                    session.mark_chunk_published(chunk.index, &event_id, &chunk.hash)?;
                     last_error = None;
                     break;
                 }
@@ -230,7 +429,12 @@ pub async fn execute(
 
     pb.finish_with_message("Upload complete!");
 
-    // 7. Publish manifest to data relays
+    // 8. Build manifest from session data
+    for (index, event_id, hash) in session.get_published_chunks()? {
+        manifest.add_chunk(index, event_id, hash)?;
+    }
+
+    // 9. Publish manifest to data relays
     println!("\nPublishing manifest to data relays...");
     let manifest_event = create_manifest_event(&manifest)?;
     match client.send_event_builder(manifest_event.clone()).await {
@@ -269,6 +473,9 @@ pub async fn execute(
     // 9. Save manifest locally as backup
     let manifest_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.nostrsave", file_name)));
     manifest.save_to_file(&manifest_path)?;
+
+    // Clean up session on success
+    session.cleanup()?;
 
     println!("\n=== Upload Summary ===");
     println!("File:       {}", file_name);

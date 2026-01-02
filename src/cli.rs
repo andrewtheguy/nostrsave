@@ -72,6 +72,10 @@ pub enum Commands {
         /// Encryption algorithm: nip44 (default) or none
         #[arg(short, long, value_parser = parse_encryption)]
         encryption: Option<EncryptionAlgorithm>,
+
+        /// Force delete corrupted session without prompting
+        #[arg(long)]
+        force: bool,
     },
 
     /// Download a file from Nostr relays

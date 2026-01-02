@@ -1,17 +1,5 @@
 # Roadmap
 
-## Planned Features
-
-### Resumable Upload
-- Track upload progress in a local state file
-- On interruption, resume from the last successfully published chunk
-- Skip chunks that already exist on relays (by event ID or hash)
-
-### Resumable Download
-- Track download progress in a local state file
-- On interruption, resume fetching missing chunks
-- Assemble partial files only when all chunks are available
-
 ## Ideas
 
 ### AES-256-GCM Chunk Encryption
@@ -48,4 +36,12 @@ Configure a large pool of data relays and rotate through them during uploads:
 - Spreads storage load across many relays
 - Reduces dependency on any single relay's availability
 - Avoids rate limits by distributing requests across relays
+
+### Space-Efficient Download Mode
+Reduce disk usage during download by purging chunks from the session database as they are written to the output file:
+- Wait until all chunks are downloaded to the session DB
+- During assembly, delete each chunk from the DB after writing it to the output file
+- Avoids having both the full DB and the assembled file on disk simultaneously
+- Useful for large files where disk space is limited
+- Trade-off: cannot resume assembly if interrupted mid-assembly (would need to re-download)
 
