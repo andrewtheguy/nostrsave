@@ -61,6 +61,15 @@ Reduce disk usage during download by purging chunks from the session database as
 - Useful for large files where disk space is limited
 - Trade-off: cannot resume assembly if interrupted mid-assembly (would need to re-download)
 
+### Delete Entry from Index
+Remove a file entry from the index:
+- `nostrsave delete <hash>` removes entry from index
+- If entry is on current index (page 1): republish with entry removed
+- If entry is on an archive page: fetch, remove entry, republish that archive
+- Only the affected page is republished; other pages unchanged
+- Uploaded chunks and manifest remain on relays (no way to force relay deletion)
+- Useful for cleaning up index after failed uploads or unwanted entries
+
 ### Passkey PRF Extension for Key Derivation (see also: AES-256-GCM Chunk Encryption)
 Use WebAuthn PRF (Pseudo-Random Function) extension for hardware-backed key derivation:
 - FIDO2 authenticators (YubiKey, Touch ID, etc.) provide secure key derivation
