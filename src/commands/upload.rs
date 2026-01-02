@@ -4,8 +4,8 @@ use crate::config::{get_data_relays, get_index_relays, get_private_key, Encrypti
 use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
-    create_chunk_event, create_file_index_event, create_file_index_filter, create_manifest_event,
-    parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry,
+    create_chunk_event, create_file_index_event, create_file_index_page_filter, create_manifest_event,
+    parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry, MAX_ENTRIES_PER_PAGE,
 };
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -566,6 +566,90 @@ async fn publish_to_index_relays(
     Ok(manifest_event_id)
 }
 
+/// Fetch all file index pages for a user
+async fn fetch_all_index_pages(
+    client: &Client,
+    pubkey: &PublicKey,
+    verbose: bool,
+) -> Vec<FileIndex> {
+    let mut pages = Vec::new();
+    let mut page_num = 1u32;
+
+    loop {
+        let filter = create_file_index_page_filter(pubkey, page_num);
+        match client.fetch_events(filter, Duration::from_secs(10)).await {
+            Ok(events) => {
+                if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
+                    match parse_file_index_event(event) {
+                        Ok(index) => {
+                            if verbose {
+                                println!("  Found page {} with {} files", page_num, index.len());
+                            }
+                            pages.push(index);
+                            page_num += 1;
+                        }
+                        Err(e) => {
+                            if verbose {
+                                eprintln!("  Failed to parse page {}: {}", page_num, e);
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    // No more pages
+                    break;
+                }
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("  Failed to fetch page {}: {}", page_num, e);
+                }
+                break;
+            }
+        }
+    }
+
+    pages
+}
+
+/// Collect all entries from all pages into a single vector, sorted by uploaded_at descending (newest first)
+fn collect_all_entries(pages: &[FileIndex]) -> Vec<FileIndexEntry> {
+    let mut all_entries: Vec<FileIndexEntry> = pages
+        .iter()
+        .flat_map(|p| p.entries().iter().cloned())
+        .collect();
+
+    // Sort by uploaded_at descending (newest first)
+    all_entries.sort_by_key(|e| std::cmp::Reverse(e.uploaded_at()));
+
+    all_entries
+}
+
+/// Distribute entries across pages, respecting MAX_ENTRIES_PER_PAGE
+fn distribute_entries_to_pages(entries: Vec<FileIndexEntry>) -> Vec<FileIndex> {
+    if entries.is_empty() {
+        return vec![FileIndex::new()];
+    }
+
+    let total_pages = entries.len().div_ceil(MAX_ENTRIES_PER_PAGE);
+    let mut pages = Vec::with_capacity(total_pages);
+
+    for (page_idx, chunk) in entries.chunks(MAX_ENTRIES_PER_PAGE).enumerate() {
+        let page_num = (page_idx + 1) as u32;
+        let mut page = FileIndex::new_page(page_num, total_pages as u32);
+
+        // Add entries in reverse order (oldest first within page) since add_entry appends
+        // and we want entries sorted by uploaded_at ascending within each page
+        for entry in chunk.iter().rev() {
+            page.add_entry(entry.clone());
+        }
+
+        pages.push(page);
+    }
+
+    pages
+}
+
 /// Publish file index to connected relays (used for both data and index relays)
 async fn publish_file_index_to_relays(
     client: &Client,
@@ -573,48 +657,46 @@ async fn publish_file_index_to_relays(
     entry: FileIndexEntry,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // Fetch existing file index
-    let filter = create_file_index_filter(&keys.public_key());
-    let mut index = match client.fetch_events(filter, Duration::from_secs(10)).await {
-        Ok(events) => {
-            if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
-                match parse_file_index_event(event) {
-                    Ok(existing_index) => {
-                        if verbose {
-                            println!("  Found existing index with {} files", existing_index.len());
-                        }
-                        existing_index
-                    }
-                    Err(e) => {
-                        if verbose {
-                            eprintln!("  Failed to parse existing index: {}", e);
-                        }
-                        FileIndex::new()
-                    }
-                }
-            } else {
-                if verbose {
-                    println!("  No existing index found, creating new one");
-                }
-                FileIndex::new()
-            }
-        }
-        Err(e) => {
-            if verbose {
-                eprintln!("  Failed to fetch existing index: {}", e);
-            }
-            FileIndex::new()
-        }
-    };
+    // Fetch all existing pages
+    let existing_pages = fetch_all_index_pages(client, &keys.public_key(), verbose).await;
 
-    // Add entry and publish
-    index.add_entry(entry);
+    // Collect all entries
+    let mut all_entries = collect_all_entries(&existing_pages);
 
-    let event_builder = create_file_index_event(&index)?;
-    client.send_event_builder(event_builder).await?;
+    // Check if this entry already exists (by file_hash) and remove it
+    all_entries.retain(|e| e.file_hash() != entry.file_hash());
+
+    // Add the new entry at the beginning (it's the newest)
+    all_entries.insert(0, entry);
 
     if verbose {
-        println!("  Index updated with {} files", index.len());
+        println!("  Total files after update: {}", all_entries.len());
+    }
+
+    // Distribute entries to pages
+    let new_pages = distribute_entries_to_pages(all_entries);
+
+    if verbose && new_pages.len() > 1 {
+        println!(
+            "  Archiving: distributing {} files across {} pages",
+            new_pages.iter().map(|p| p.len()).sum::<usize>(),
+            new_pages.len()
+        );
+    }
+
+    // Publish all pages
+    for page in &new_pages {
+        let event_builder = create_file_index_event(page)?;
+        client.send_event_builder(event_builder).await?;
+
+        if verbose {
+            println!(
+                "  Published page {}/{} with {} files",
+                page.page(),
+                page.total_pages(),
+                page.len()
+            );
+        }
     }
 
     Ok(())

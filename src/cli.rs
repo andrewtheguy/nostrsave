@@ -136,6 +136,10 @@ pub enum Commands {
         /// Fetch file index from data relays instead of index relays
         #[arg(long)]
         from_data_relays: bool,
+
+        /// Page number (1 = most recent, higher = older files)
+        #[arg(long, default_value = "1")]
+        page: u32,
     },
 
     /// Print best relays from discovery results in TOML format

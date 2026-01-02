@@ -2,11 +2,14 @@ use crate::config::{EncryptionAlgorithm, FILE_INDEX_EVENT_KIND};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// Identifier for the file index replaceable event
+/// Identifier for the file index replaceable event (page 1)
 pub const FILE_INDEX_IDENTIFIER: &str = "nostrsave-index";
 
 /// Current file index version
-pub const CURRENT_FILE_INDEX_VERSION: u8 = 1;
+pub const CURRENT_FILE_INDEX_VERSION: u8 = 2;
+
+/// Maximum entries per index page before archiving
+pub const MAX_ENTRIES_PER_PAGE: usize = 1000;
 
 /// Expected length of SHA-256 hash in hex (64 characters)
 const SHA256_HEX_LEN: usize = 64;
@@ -172,6 +175,8 @@ impl<'de> Deserialize<'de> for FileIndexEntry {
 pub struct FileIndex {
     version: u8,
     entries: Vec<FileIndexEntry>,
+    page: u32,
+    total_pages: u32,
 }
 
 impl FileIndex {
@@ -180,6 +185,18 @@ impl FileIndex {
         Self {
             version: CURRENT_FILE_INDEX_VERSION,
             entries: Vec::new(),
+            page: 1,
+            total_pages: 1,
+        }
+    }
+
+    /// Create a file index for a specific page
+    pub fn new_page(page: u32, total_pages: u32) -> Self {
+        Self {
+            version: CURRENT_FILE_INDEX_VERSION,
+            entries: Vec::new(),
+            page,
+            total_pages,
         }
     }
 
@@ -221,6 +238,66 @@ impl FileIndex {
     pub fn entries(&self) -> &[FileIndexEntry] {
         &self.entries
     }
+
+    /// Get the page number (1 = newest/current)
+    #[must_use]
+    pub fn page(&self) -> u32 {
+        self.page
+    }
+
+    /// Get the total number of pages
+    #[must_use]
+    pub fn total_pages(&self) -> u32 {
+        self.total_pages
+    }
+
+    /// Set the total pages count (used when updating after archiving)
+    #[allow(dead_code)]
+    pub fn set_total_pages(&mut self, total: u32) {
+        self.total_pages = total;
+    }
+
+    /// Check if this index needs archiving (too many entries)
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn needs_archiving(&self) -> bool {
+        self.entries.len() > MAX_ENTRIES_PER_PAGE
+    }
+
+    /// Get the d-tag identifier for this index page
+    #[must_use]
+    pub fn get_identifier(&self) -> String {
+        if self.page == 1 {
+            FILE_INDEX_IDENTIFIER.to_string()
+        } else {
+            format!("{}-page-{}", FILE_INDEX_IDENTIFIER, self.page)
+        }
+    }
+
+    /// Split this index for archiving.
+    /// Returns (current_page, archive_page) where:
+    /// - current_page: newest MAX_ENTRIES_PER_PAGE entries (stays as page 1)
+    /// - archive_page: older entries (becomes page 2, pushing existing pages down)
+    #[allow(dead_code)]
+    pub fn split_for_archive(&self) -> (FileIndex, FileIndex) {
+        let split_point = self.entries.len().saturating_sub(MAX_ENTRIES_PER_PAGE);
+
+        // Older entries go to archive (indices 0..split_point)
+        let archive_entries: Vec<FileIndexEntry> = self.entries[..split_point].to_vec();
+
+        // Newer entries stay in current page (indices split_point..)
+        let current_entries: Vec<FileIndexEntry> = self.entries[split_point..].to_vec();
+
+        let new_total_pages = self.total_pages + 1;
+
+        let mut current = FileIndex::new_page(1, new_total_pages);
+        current.entries = current_entries;
+
+        let mut archive = FileIndex::new_page(2, new_total_pages);
+        archive.entries = archive_entries;
+
+        (current, archive)
+    }
 }
 
 impl Default for FileIndex {
@@ -234,18 +311,24 @@ pub fn create_file_index_event(index: &FileIndex) -> anyhow::Result<EventBuilder
     let content = serde_json::to_string(index)?;
 
     let tags = vec![
-        Tag::identifier(FILE_INDEX_IDENTIFIER),
+        Tag::identifier(index.get_identifier()),
     ];
 
     Ok(EventBuilder::new(Kind::Custom(FILE_INDEX_EVENT_KIND), content).tags(tags))
 }
 
-/// Create a filter to query for a user's file index
-pub fn create_file_index_filter(pubkey: &PublicKey) -> Filter {
+/// Create a filter to query for a specific page of a user's file index
+pub fn create_file_index_page_filter(pubkey: &PublicKey, page: u32) -> Filter {
+    let identifier = if page == 1 {
+        FILE_INDEX_IDENTIFIER.to_string()
+    } else {
+        format!("{}-page-{}", FILE_INDEX_IDENTIFIER, page)
+    };
+
     Filter::new()
         .kind(Kind::Custom(FILE_INDEX_EVENT_KIND))
         .author(*pubkey)
-        .identifier(FILE_INDEX_IDENTIFIER)
+        .identifier(identifier)
         .limit(1)
 }
 
@@ -284,6 +367,99 @@ mod tests {
         let index = FileIndex::new();
         assert_eq!(index.version(), CURRENT_FILE_INDEX_VERSION);
         assert!(index.is_empty());
+        assert_eq!(index.page(), 1);
+        assert_eq!(index.total_pages(), 1);
+    }
+
+    #[test]
+    fn test_file_index_get_identifier() {
+        let index = FileIndex::new();
+        assert_eq!(index.get_identifier(), "nostrsave-index");
+
+        let page2 = FileIndex::new_page(2, 3);
+        assert_eq!(page2.get_identifier(), "nostrsave-index-page-2");
+
+        let page5 = FileIndex::new_page(5, 10);
+        assert_eq!(page5.get_identifier(), "nostrsave-index-page-5");
+    }
+
+    #[test]
+    fn test_file_index_needs_archiving() {
+        let mut index = FileIndex::new();
+        assert!(!index.needs_archiving());
+
+        // Add MAX_ENTRIES_PER_PAGE entries - should not need archiving
+        for i in 0..MAX_ENTRIES_PER_PAGE {
+            let hash = format!(
+                "sha256:{:064x}",
+                i
+            );
+            let entry = FileIndexEntry::new(
+                hash,
+                format!("file{i}.txt"),
+                1024,
+                1234567890,
+                EncryptionAlgorithm::Nip44,
+            )
+            .unwrap();
+            index.add_entry(entry);
+        }
+        assert!(!index.needs_archiving());
+
+        // Add one more - should need archiving
+        let entry = FileIndexEntry::new(
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+            "overflow.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        )
+        .unwrap();
+        index.add_entry(entry);
+        assert!(index.needs_archiving());
+    }
+
+    #[test]
+    fn test_file_index_split_for_archive() {
+        let mut index = FileIndex::new();
+
+        // Add entries with increasing timestamps so we can verify order
+        for i in 0..(MAX_ENTRIES_PER_PAGE + 100) {
+            let hash = format!(
+                "sha256:{:064x}",
+                i
+            );
+            let entry = FileIndexEntry::new(
+                hash,
+                format!("file{i}.txt"),
+                1024,
+                1234567890 + i as u64,
+                EncryptionAlgorithm::Nip44,
+            )
+            .unwrap();
+            index.add_entry(entry);
+        }
+
+        let (current, archive) = index.split_for_archive();
+
+        // Current page should have MAX_ENTRIES_PER_PAGE entries (the newest ones)
+        assert_eq!(current.len(), MAX_ENTRIES_PER_PAGE);
+        assert_eq!(current.page(), 1);
+        assert_eq!(current.total_pages(), 2);
+        assert_eq!(current.get_identifier(), "nostrsave-index");
+
+        // Archive page should have 100 entries (the oldest ones)
+        assert_eq!(archive.len(), 100);
+        assert_eq!(archive.page(), 2);
+        assert_eq!(archive.total_pages(), 2);
+        assert_eq!(archive.get_identifier(), "nostrsave-index-page-2");
+
+        // Verify the oldest entries are in the archive
+        assert_eq!(archive.entries()[0].file_name(), "file0.txt");
+        assert_eq!(archive.entries()[99].file_name(), "file99.txt");
+
+        // Verify the newest entries are in current
+        assert_eq!(current.entries()[0].file_name(), "file100.txt");
     }
 
     #[test]

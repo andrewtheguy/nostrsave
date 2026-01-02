@@ -1,10 +1,10 @@
 use crate::config::{get_data_relays, get_index_relays, get_private_key};
-use crate::nostr::{create_file_index_filter, parse_file_index_event};
+use crate::nostr::{create_file_index_page_filter, parse_file_index_event};
 use chrono::{TimeZone, Utc};
 use nostr_sdk::prelude::*;
 use std::time::Duration;
 
-pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_relays: bool, verbose: bool) -> anyhow::Result<()> {
+pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_relays: bool, page: u32, verbose: bool) -> anyhow::Result<()> {
     // 1. Determine which public key to query
     let target_pubkey = if let Some(pk) = pubkey {
         // User specified a public key
@@ -94,8 +94,8 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
     }
 
     // 3. Fetch file index
-    println!("Fetching file index...\n");
-    let filter = create_file_index_filter(&target_pubkey);
+    println!("Fetching file index (page {})...\n", page);
+    let filter = create_file_index_page_filter(&target_pubkey, page);
 
     let index = match client.fetch_events(filter, Duration::from_secs(10)).await {
         Ok(events) => {
@@ -104,8 +104,13 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
             if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
                 parse_file_index_event(event)?
             } else {
-                println!("No file index found for this public key.");
-                println!("\nUpload files with 'nostrsave upload <file>' to create an index.");
+                if page == 1 {
+                    println!("No file index found for this public key.");
+                    println!("\nUpload files with 'nostrsave upload <file>' to create an index.");
+                } else {
+                    println!("Page {} does not exist.", page);
+                    println!("\nUse --page 1 to view the most recent files, or omit --page.");
+                }
                 client.disconnect().await;
                 return Ok(());
             }
@@ -118,6 +123,15 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
 
     client.disconnect().await;
 
+    // Validate page number matches what we fetched
+    if index.page() != page {
+        println!(
+            "Warning: Requested page {} but received page {}. The index may be out of sync.",
+            page,
+            index.page()
+        );
+    }
+
     // 4. Display results
     if index.is_empty() {
         println!("File index is empty.");
@@ -125,7 +139,13 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
         return Ok(());
     }
 
-    println!("Indexed files ({}):\n", index.len());
+    // Show page info
+    println!(
+        "Page {}/{} ({} files on this page):\n",
+        index.page(),
+        index.total_pages(),
+        index.len()
+    );
     println!(
         "  {:<3} {:<35} {:>12}  {:<20}  {:<5}  Hash",
         "#", "Name", "Size", "Uploaded", "Enc"
@@ -167,6 +187,23 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
     }
 
     println!("\nDownload with: nostrsave download --hash <hash>");
+
+    // Show pagination hints
+    if index.total_pages() > 1 {
+        println!();
+        if index.page() < index.total_pages() {
+            println!(
+                "Use --page {} to view older files",
+                index.page() + 1
+            );
+        }
+        if index.page() > 1 {
+            println!(
+                "Use --page {} to view newer files",
+                index.page() - 1
+            );
+        }
+    }
 
     Ok(())
 }
