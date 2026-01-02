@@ -56,3 +56,12 @@ Reduce disk usage during download by purging chunks from the session database as
 - Useful for large files where disk space is limited
 - Trade-off: cannot resume assembly if interrupted mid-assembly (would need to re-download)
 
+### Passkey PRF Extension for Key Derivation
+Use WebAuthn PRF (Pseudo-Random Function) extension to derive Nostr keypairs from passkeys:
+- Hardware-backed key derivation using FIDO2 authenticators (YubiKey, Touch ID, etc.)
+- Deterministic: same passkey + salt always produces same keypair
+- No private key stored on disk - derived on-demand during authentication
+- Could integrate with web interface for browser-based key derivation
+- Requires PRF-compatible authenticator and browser support
+- Salt could be stored in config, keypair derived at runtime
+
