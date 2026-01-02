@@ -604,8 +604,15 @@ async fn fetch_index_page(
     }
 }
 
-/// Publish file index to connected relays (used for both data and index relays)
-/// Only fetches pages on demand when archiving cascades.
+/// Publish file index to connected relays (used for both data and index relays).
+///
+/// Pages are fetched on demand to avoid fetching thousands of pages at once.
+/// Only page 1 is fetched initially; subsequent pages are fetched only when
+/// archiving overflow cascades to them.
+///
+/// Gap handling: If a page is missing (e.g., relay deleted it), it's treated
+/// as empty and overflow entries fill the gap. Pages beyond a gap are not
+/// fetched or updated - this is acceptable since Nostr persistence is best-effort.
 async fn publish_file_index_to_relays(
     client: &Client,
     keys: &Keys,
