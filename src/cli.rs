@@ -240,7 +240,7 @@ pub enum Commands {
     /// Generate a new Nostr keypair
     Keygen,
 
-    /// Show public key from config
+    /// Show public key from private key file, default to the key file path from ~/.config/nostrsave/config.toml
     Pubkey,
 
     /// Discover and test Nostr relays
