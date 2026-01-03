@@ -153,9 +153,9 @@ nostrsave discover-relays wss://relay.example.com
 nostrsave discover-relays --relay-source <SOURCE>
 
 Sources:
-  nostrwatch       Fetch from nostr.watch API + configured relays
-  configured-only  Only test configured index relays
-  index-relays     Query NIP-66/NIP-65 events from index relays
+  nostrwatch       Discover from nostr.watch API + configured relays
+  configured-only  Discover from configured index relays only
+  index-relays     Discover from NIP-66/NIP-65 events on index relays
 
 Options:
   -o, --output <PATH>     Output JSON file (default: relays-{source}.json)

@@ -321,6 +321,21 @@ pub async fn discover_relays_from_index(
     client.connect().await;
     client.wait_for_connection(timeout).await;
 
+    // Verify at least one relay connected
+    let connected_count = client
+        .relays()
+        .await
+        .into_iter()
+        .filter(|(_, relay)| relay.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        client.disconnect().await;
+        return Err(anyhow::anyhow!(
+            "Failed to connect to any index relay within timeout"
+        ));
+    }
+
     // Query for NIP-66 relay discovery events (kind 30166)
     // These are published by relay monitors
     let nip66_filter = Filter::new().kind(relay_discovery_kind()).limit(100);
