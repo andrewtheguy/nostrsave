@@ -38,6 +38,11 @@ cargo build --release
 # Generate a keypair
 nostrsave keygen
 
+# Save the private key (replace with the nsec from keygen)
+mkdir -p ~/.config/nostrsave
+echo "nsec1..." > ~/.config/nostrsave/nostr.key
+chmod 600 ~/.config/nostrsave/nostr.key
+
 # Create config with the sample (uses key from ~/.config/nostrsave/nostr.key)
 mkdir -p ~/.config/nostrsave
 cp config.sample.toml ~/.config/nostrsave/config.toml
