@@ -54,10 +54,10 @@ impl Manifest {
         pubkey: String,
         relays: Vec<String>,
         encryption: EncryptionAlgorithm,
-    ) -> Self {
-        let _ = Self::validate_hash("file_hash", &file_hash);
+    ) -> anyhow::Result<Self> {
+        Self::validate_hash("file_hash", &file_hash)?;
         let total_chunks = file_size.div_ceil(chunk_size as u64) as usize;
-        Self {
+        Ok(Self {
             version: CURRENT_MANIFEST_VERSION,
             file_name,
             file_hash,
@@ -72,7 +72,7 @@ impl Manifest {
             chunks: Vec::with_capacity(total_chunks),
             relays,
             encryption,
-        }
+        })
     }
 
     /// Add a chunk to the manifest with validation.
@@ -187,6 +187,7 @@ mod tests {
             vec!["wss://relay.example.com".to_string()],
             EncryptionAlgorithm::None,
         )
+        .unwrap()
     }
 
     #[test]
@@ -282,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_rejects_invalid_hashes() {
+    fn test_load_rejects_invalid_file_hash() {
         use std::io::Write;
 
         let temp_dir = TempDir::new().unwrap();
@@ -312,6 +313,40 @@ mod tests {
         let result = Manifest::load_from_file(&path);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("file_hash") || msg.contains("chunk hash"));
+        assert!(msg.contains("file_hash"));
+    }
+
+    #[test]
+    fn test_load_rejects_invalid_chunk_hash() {
+        use std::io::Write;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("manifest.nostrsave");
+
+        let json = r#"{
+            "version": 2,
+            "file_name": "test.bin",
+            "file_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "file_size": 1000,
+            "chunk_size": 100,
+            "total_chunks": 10,
+            "created_at": 1234567890,
+            "pubkey": "npub1test",
+            "chunks": [
+                {"index": 0, "event_id": "note1abc", "hash": "short"}
+            ],
+            "relays": ["wss://relay.example.com"],
+            "encryption": "none"
+        }"#;
+
+        let mut file = File::create(&path).unwrap();
+        file.write_all(json.as_bytes()).unwrap();
+        file.flush().unwrap();
+        drop(file);
+
+        let result = Manifest::load_from_file(&path);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("chunk hash"));
     }
 }

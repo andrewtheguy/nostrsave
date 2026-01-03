@@ -305,7 +305,7 @@ pub async fn execute(
         keys.public_key().to_bech32()?,
         data_relays.clone(),
         encryption,
-    );
+    )?;
 
     println!("Encryption: {}", encryption);
 
@@ -517,11 +517,9 @@ async fn publish_to_index_relays(
             Ok(_) => {
                 added_count += 1;
             }
-            Err(e) => {
-                if verbose {
+                Err(e) => {
                     warn!("Failed to add index relay {}: {}", relay, e);
                 }
-            }
         }
     }
 
