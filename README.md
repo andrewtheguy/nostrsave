@@ -32,21 +32,40 @@ cargo build --release
 
 ## Quick Start
 
+### 1. Setup (one time)
+
 ```bash
 # Generate a keypair
 nostrsave keygen
 
-# Upload a file (encrypted by default with nip44)
-nostrsave upload photo.jpg --key-file ~/.config/nostrsave/nostr.key
+# Create config with the sample (uses key from ~/.config/nostrsave/nostr.key)
+mkdir -p ~/.config/nostrsave
+cp config.sample.toml ~/.config/nostrsave/config.toml
+```
 
-# Upload without encryption
-nostrsave upload photo.jpg --key-file nostr.key --encryption none
+### 2. Usage
+
+```bash
+# Upload a file (encrypted by default with nip44)
+nostrsave upload photo.jpg
 
 # List your indexed files
-nostrsave list --key-file ~/.config/nostrsave/nostr.key
+nostrsave list
 
 # Download a file by hash (decrypts automatically)
-nostrsave download sha256:abc123... --key-file ~/.config/nostrsave/nostr.key
+nostrsave download sha256:abc123...
+
+# Upload without encryption
+nostrsave upload photo.jpg --encryption none
+```
+
+### Without config file
+
+You can also use command-line flags directly:
+
+```bash
+nostrsave upload photo.jpg --key-file ~/.config/nostrsave/nostr.key
+nostrsave list --key-file ~/.config/nostrsave/nostr.key
 ```
 
 ## Configuration
