@@ -106,7 +106,7 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     // Generate test payload with random data
     let mut test_data = vec![0u8; chunk_size];
     rand::thread_rng().fill(&mut test_data[..]);
-    let test_hash = format!("sha256:{}", hex::encode(Sha256::digest(&test_data)));
+    let test_hash = hex::encode(Sha256::digest(&test_data));
 
     // Encrypt test data using NIP-44 (same as actual upload)
     let encrypted_content = match crypto::encrypt_chunk(&keys, &test_data) {

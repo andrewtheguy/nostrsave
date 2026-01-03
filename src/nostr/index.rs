@@ -42,7 +42,7 @@ impl FileIndexEntry {
     ///
     /// # Errors
     /// Returns an error if:
-    /// - `file_hash` doesn't start with "sha256:" or has invalid hex
+    /// - `file_hash` is not 64 hex characters
     /// - `file_name` is empty or contains path separators
     /// - `file_size` is zero
     /// - `uploaded_at` is zero
@@ -53,22 +53,15 @@ impl FileIndexEntry {
         uploaded_at: u64,
         encryption: EncryptionAlgorithm,
     ) -> anyhow::Result<Self> {
-        // Validate file_hash format: "sha256:<64 hex chars>"
-        if !file_hash.starts_with("sha256:") {
-            return Err(anyhow::anyhow!(
-                "Invalid file_hash: must start with 'sha256:', got '{}'",
-                file_hash
-            ));
-        }
-        let hex_part = &file_hash[7..];
-        if hex_part.len() != SHA256_HEX_LEN {
+        // Validate file_hash format: 64 hex chars
+        if file_hash.len() != SHA256_HEX_LEN {
             return Err(anyhow::anyhow!(
                 "Invalid file_hash: expected {} hex characters, got {}",
                 SHA256_HEX_LEN,
-                hex_part.len()
+                file_hash.len()
             ));
         }
-        if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !file_hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(anyhow::anyhow!(
                 "Invalid file_hash: contains non-hex characters"
             ));
@@ -421,7 +414,7 @@ mod tests {
     use super::*;
 
     // Valid SHA-256 hash for testing (64 hex chars)
-    const TEST_HASH: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const TEST_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     #[test]
     fn test_file_index_new() {
@@ -498,10 +491,7 @@ mod tests {
 
         // Add MAX_ENTRIES_PER_PAGE entries - should not need archiving
         for i in 0..MAX_ENTRIES_PER_PAGE {
-            let hash = format!(
-                "sha256:{:064x}",
-                i
-            );
+            let hash = format!("{:064x}", i);
             let entry = FileIndexEntry::new(
                 hash,
                 format!("file{i}.txt"),
@@ -516,7 +506,7 @@ mod tests {
 
         // Add one more - should need archiving
         let entry = FileIndexEntry::new(
-            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
             "overflow.txt".to_string(),
             1024,
             1234567890,
@@ -548,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_file_index_entry_invalid_hash() {
-        // Missing sha256: prefix
+        // Wrong length
         let result = FileIndexEntry::new(
             "abc123".to_string(),
             "test.txt".to_string(),
@@ -557,18 +547,18 @@ mod tests {
             EncryptionAlgorithm::Nip44,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("sha256:"));
+        assert!(result.unwrap_err().to_string().contains("64"));
 
-        // Wrong length
+        // Non-hex characters
         let result = FileIndexEntry::new(
-            "sha256:abc123".to_string(),
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_string(),
             "test.txt".to_string(),
             1024,
             1234567890,
             EncryptionAlgorithm::Nip44,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("64"));
+        assert!(result.unwrap_err().to_string().contains("non-hex"));
     }
 
     #[test]

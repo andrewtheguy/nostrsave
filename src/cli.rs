@@ -91,7 +91,7 @@ pub enum Commands {
 
     /// Download a file from Nostr relays
     Download {
-        /// File hash to fetch manifest from relays (e.g., sha256:abc123...)
+        /// File hash to fetch manifest from relays (sha256:<hash> or raw 64-hex)
         #[arg(value_name = "HASH", required_unless_present = "manifest")]
         hash: Option<String>,
 

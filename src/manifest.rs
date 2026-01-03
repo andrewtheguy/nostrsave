@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 /// Current manifest version
-pub const CURRENT_MANIFEST_VERSION: u8 = 1;
+pub const CURRENT_MANIFEST_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -156,7 +156,7 @@ mod tests {
     fn create_test_manifest() -> Manifest {
         Manifest::new(
             "test.bin".to_string(),
-            "sha256:abc123".to_string(),
+            "abc123".to_string(),
             1000,
             100,
             "npub1test".to_string(),
@@ -168,8 +168,8 @@ mod tests {
     #[test]
     fn test_add_chunk_success() {
         let mut manifest = create_test_manifest();
-        assert!(manifest.add_chunk(0, "note1abc".to_string(), "sha256:chunk0".to_string()).is_ok());
-        assert!(manifest.add_chunk(5, "note1def".to_string(), "sha256:chunk5".to_string()).is_ok());
+        assert!(manifest.add_chunk(0, "note1abc".to_string(), "chunk0".to_string()).is_ok());
+        assert!(manifest.add_chunk(5, "note1def".to_string(), "chunk5".to_string()).is_ok());
         assert_eq!(manifest.chunks.len(), 2);
     }
 
@@ -177,7 +177,7 @@ mod tests {
     fn test_add_chunk_out_of_bounds() {
         let mut manifest = create_test_manifest();
         // total_chunks = 10 (1000 / 100), so index 10 is out of bounds
-        let result = manifest.add_chunk(10, "note1xxx".to_string(), "sha256:chunkX".to_string());
+        let result = manifest.add_chunk(10, "note1xxx".to_string(), "chunkX".to_string());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("out of bounds"));
     }
@@ -185,9 +185,9 @@ mod tests {
     #[test]
     fn test_add_chunk_duplicate_index() {
         let mut manifest = create_test_manifest();
-        manifest.add_chunk(3, "note1first".to_string(), "sha256:chunk3".to_string()).unwrap();
+        manifest.add_chunk(3, "note1first".to_string(), "chunk3".to_string()).unwrap();
 
-        let result = manifest.add_chunk(3, "note1second".to_string(), "sha256:chunk3dup".to_string());
+        let result = manifest.add_chunk(3, "note1second".to_string(), "chunk3dup".to_string());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Duplicate"));
     }
@@ -198,7 +198,7 @@ mod tests {
         let path = temp_dir.path().join("manifest.nostrsave");
 
         let mut manifest = create_test_manifest();
-        manifest.add_chunk(0, "note1abc".to_string(), "sha256:chunk0".to_string()).unwrap();
+        manifest.add_chunk(0, "note1abc".to_string(), "chunk0".to_string()).unwrap();
         manifest.save_to_file(&path).unwrap();
 
         let loaded = Manifest::load_from_file(&path).unwrap();
@@ -230,7 +230,7 @@ mod tests {
         let json = r#"{
             "version": 99,
             "file_name": "test.bin",
-            "file_hash": "sha256:abc123",
+            "file_hash": "abc123",
             "file_size": 1000,
             "chunk_size": 100,
             "total_chunks": 10,

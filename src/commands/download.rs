@@ -20,6 +20,36 @@ use std::time::{Duration, Instant};
 /// (querying specific chunk identifiers) instead of a full filter (querying all chunks).
 /// Value of 2 means: use targeted filter when less than 50% of chunks are missing.
 const TARGETED_FILTER_THRESHOLD_DIVISOR: usize = 2;
+/// Expected length of SHA-256 hash in hex (64 characters)
+const SHA256_HEX_LEN: usize = 64;
+
+fn normalize_file_hash_input(input: &str) -> anyhow::Result<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("Hash cannot be empty"));
+    }
+
+    let raw = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("sha256:") {
+        &trimmed[7..]
+    } else {
+        trimmed
+    };
+
+    if raw.len() != SHA256_HEX_LEN {
+        return Err(anyhow::anyhow!(
+            "Invalid hash length: expected {} hex characters, got {}",
+            SHA256_HEX_LEN,
+            raw.len()
+        ));
+    }
+    if !raw.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow::anyhow!(
+            "Invalid hash: contains non-hex characters"
+        ));
+    }
+
+    Ok(raw.to_ascii_lowercase())
+}
 
 /// Statistics for a single relay
 #[derive(Debug, Default)]
@@ -147,6 +177,7 @@ pub async fn execute(
     let manifest = if let Some(path) = manifest_path {
         Manifest::load_from_file(&path)?
     } else if let Some(hash) = file_hash {
+        let hash = normalize_file_hash_input(&hash)?;
         // Use index or data relays to fetch manifest based on flag
         let relay_list = if from_data_relays {
             println!("Using data relays for manifest lookup...");
@@ -372,7 +403,7 @@ pub async fn execute(
                                 // Compute chunk hash
                                 let mut hasher = Sha256::new();
                                 hasher.update(&chunk_data.data);
-                                let chunk_hash = format!("sha256:{}", hex::encode(hasher.finalize()));
+                                let chunk_hash = hex::encode(hasher.finalize());
 
                                 // Store in session (idempotent - INSERT OR REPLACE)
                                 session.store_chunk(chunk_data.index, &chunk_data.data, &chunk_hash)?;
