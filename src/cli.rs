@@ -9,6 +9,8 @@ pub enum RelaySource {
     ConfiguredOnly,
     /// Discover from nostr.watch + configured relays
     Nostrwatch,
+    /// Discover from NIP-65 relay list events on index relays
+    IndexRelays,
 }
 
 /// Minimum chunk size (1 KB)

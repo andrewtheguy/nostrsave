@@ -258,6 +258,77 @@ pub async fn test_relays_concurrent(
     results
 }
 
+/// Discover relays from NIP-65 relay list metadata events (kind 10002)
+/// Connects to the provided relays and fetches kind 10002 events,
+/// then extracts relay URLs from the "r" tags.
+pub async fn discover_relays_from_nip65(
+    index_relays: &[String],
+    timeout: Duration,
+) -> anyhow::Result<Vec<String>> {
+    use std::collections::HashSet;
+
+    // Create a temporary client for querying
+    let keys = Keys::generate();
+    let client = Client::new(keys);
+
+    // Add relays
+    for relay in index_relays {
+        if let Err(e) = client.add_relay(relay).await {
+            eprintln!("  Warning: Failed to add relay {}: {}", relay, e);
+        }
+    }
+
+    // Connect
+    client.connect().await;
+    client.wait_for_connection(timeout).await;
+
+    // Verify at least one relay connected
+    let connected_count = client
+        .relays()
+        .await
+        .into_iter()
+        .filter(|(_, r)| r.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        client.disconnect().await;
+        return Err(anyhow::anyhow!("No index relays connected"));
+    }
+
+    // Create filter for NIP-65 relay list events (kind 10002)
+    let filter = Filter::new().kind(Kind::RelayList).limit(500);
+
+    // Fetch events
+    let events = match client.fetch_events(filter, timeout).await {
+        Ok(events) => events,
+        Err(e) => {
+            client.disconnect().await;
+            return Err(anyhow::anyhow!("Failed to fetch NIP-65 events: {}", e));
+        }
+    };
+
+    client.disconnect().await;
+
+    // Extract relay URLs from "r" tags
+    let mut relays: HashSet<String> = HashSet::new();
+
+    for event in events.iter() {
+        for tag in event.tags.iter() {
+            // NIP-65 uses "r" tags: ["r", "wss://relay.url", optional "read"|"write"]
+            if tag.kind() == TagKind::Relay {
+                if let Some(relay_url) = tag.content() {
+                    // Basic validation: must start with ws:// or wss://
+                    if relay_url.starts_with("wss://") || relay_url.starts_with("ws://") {
+                        relays.insert(relay_url.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(relays.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
