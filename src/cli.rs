@@ -1,6 +1,15 @@
 use crate::config::EncryptionAlgorithm;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+/// Source for relay discovery
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum RelaySource {
+    /// Only test configured relays
+    ConfiguredOnly,
+    /// Discover from nostr.watch + configured relays
+    Nostrwatch,
+}
 
 /// Minimum chunk size (1 KB)
 const MIN_CHUNK_SIZE: usize = 1024;
@@ -109,13 +118,17 @@ pub enum Commands {
 
     /// Discover and test Nostr relays
     DiscoverRelays {
+        /// Single relay URL to test (e.g., wss://relay.example.com)
+        #[arg(value_name = "RELAY", required_unless_present = "relay_source")]
+        relay: Option<String>,
+
+        /// Relay source for discovery: "configured-only" or "nostrwatch"
+        #[arg(long, value_name = "SOURCE", conflicts_with = "relay")]
+        relay_source: Option<RelaySource>,
+
         /// Output file for relay discovery results (JSON)
         #[arg(short, long, default_value = "relays.json")]
         output: PathBuf,
-
-        /// Only test configured relays, skip public discovery
-        #[arg(long)]
-        configured_only: bool,
 
         /// Connection timeout in seconds
         #[arg(long, default_value = "10")]
