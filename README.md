@@ -157,6 +157,9 @@ Sources:
   configured-only  Discover from configured index relays only
   index-relays     Discover from NIP-66/NIP-65 events on index relays
 
+No authentication required - discovery uses public APIs and anonymous queries.
+Relay testing uses a temporary keypair internally.
+
 Options:
   -o, --output <PATH>     Output JSON file (default: relays-{source}.json)
   --timeout <SECONDS>     Connection timeout (default: 10)
