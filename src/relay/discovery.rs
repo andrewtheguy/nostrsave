@@ -314,8 +314,13 @@ pub async fn discover_relays_from_nip65(
 
     for event in events.iter() {
         for tag in event.tags.iter() {
-            // NIP-65 uses "r" tags: ["r", "wss://relay.url", optional "read"|"write"]
-            if tag.kind() == TagKind::Relay {
+            // NIP-65 uses single-letter "r" tags: ["r", "wss://relay.url", optional "read"|"write"]
+            let is_relay_tag = tag
+                .single_letter_tag()
+                .map(|slt| slt.character == Alphabet::R)
+                .unwrap_or(false);
+
+            if is_relay_tag {
                 if let Some(relay_url) = tag.content() {
                     // Basic validation: must start with ws:// or wss://
                     if relay_url.starts_with("wss://") || relay_url.starts_with("ws://") {
