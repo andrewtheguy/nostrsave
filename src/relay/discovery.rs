@@ -49,7 +49,10 @@ pub async fn discover_relays_from_nostr_watch() -> anyhow::Result<Vec<String>> {
     }
 
     let relays: Vec<String> = response.json().await?;
-    Ok(relays)
+    Ok(relays
+        .into_iter()
+        .map(|u| u.trim_end_matches('/').to_string())
+        .collect())
 }
 
 /// Test a single relay for connectivity and round-trip with chunk-sized payload.
@@ -277,7 +280,7 @@ fn extract_relay_from_nip66(event: &Event) -> Option<String> {
         .iter()
         .find(|t| t.kind() == TagKind::d())
         .and_then(|t| t.content())
-        .map(|s| s.to_string())
+        .map(|s| s.trim_end_matches('/').to_string())
         .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
 }
 
@@ -294,7 +297,7 @@ fn extract_relays_from_nip65(event: &Event) -> Vec<String> {
                 .unwrap_or(false)
         })
         .filter_map(|t| t.content())
-        .map(|s| s.to_string())
+        .map(|s| s.trim_end_matches('/').to_string())
         .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
         .collect()
 }
@@ -427,3 +430,41 @@ mod tests {
         assert!(!no_read.is_working());
     }
 }
+
+    #[tokio::test]
+    async fn test_extract_relay_normalization() {
+        use nostr_sdk::{EventBuilder, Keys, Tag};
+
+        let keys = Keys::generate();
+        
+        // Test NIP-66 (kind 30166)
+        let event = EventBuilder::new(
+            relay_discovery_kind(),
+            "",
+        )
+        .tag(Tag::custom(TagKind::d(), vec!["wss://relay.damus.io/"]))
+        .sign(&keys).await
+        .unwrap();
+
+        assert_eq!(
+            extract_relay_from_nip66(&event),
+            Some("wss://relay.damus.io".to_string())
+        );
+
+        // Test NIP-65 (kind 10002)
+        let event = EventBuilder::new(
+            relay_list_kind(),
+            "",
+        )
+        .tags(vec![
+            Tag::parse(vec!["r", "wss://nos.lol/"]).unwrap(),
+            Tag::parse(vec!["r", "wss://relay.damus.io"]).unwrap(),
+        ])
+        .sign(&keys).await
+        .unwrap();
+
+        let relays = extract_relays_from_nip65(&event);
+        assert!(relays.contains(&"wss://nos.lol".to_string()));
+        assert!(relays.contains(&"wss://relay.damus.io".to_string()));
+        assert!(!relays.contains(&"wss://nos.lol/".to_string()));
+    }

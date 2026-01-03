@@ -254,7 +254,7 @@ fn is_valid_domain(host: &str) -> bool {
 }
 
 pub(crate) fn validate_relay_url(input: &str) -> Result<String, String> {
-    let trimmed = input.trim();
+    let trimmed = input.trim().trim_end_matches('/');
 
     if trimmed.is_empty() {
         return Err("Empty URL".to_string());
@@ -421,4 +421,10 @@ mod tests {
         assert!(!relays.is_empty());
         assert!(relays.iter().all(|r| r.starts_with("wss://")));
     }
+}
+
+#[test]
+fn test_validate_relay_url_normalization_extra() {
+    assert_eq!(validate_relay_url("wss://relay.damus.io/").unwrap(), "wss://relay.damus.io");
+    assert_eq!(validate_relay_url("wss://nos.lol/").unwrap(), "wss://nos.lol");
 }
