@@ -30,6 +30,22 @@ pub struct ChunkInfo {
 }
 
 impl Manifest {
+    fn validate_hash(label: &str, value: &str) -> anyhow::Result<()> {
+        const SHA256_HEX_LEN: usize = 64;
+        if value.len() != SHA256_HEX_LEN {
+            return Err(anyhow::anyhow!(
+                "Invalid {}: expected {} hex characters, got {}",
+                label,
+                SHA256_HEX_LEN,
+                value.len()
+            ));
+        }
+        if !value.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(anyhow::anyhow!("Invalid {}: contains non-hex characters", label));
+        }
+        Ok(())
+    }
+
     pub fn new(
         file_name: String,
         file_hash: String,
@@ -39,6 +55,7 @@ impl Manifest {
         relays: Vec<String>,
         encryption: EncryptionAlgorithm,
     ) -> Self {
+        let _ = Self::validate_hash("file_hash", &file_hash);
         let total_chunks = file_size.div_ceil(chunk_size as u64) as usize;
         Self {
             version: CURRENT_MANIFEST_VERSION,
@@ -80,6 +97,8 @@ impl Manifest {
                 index
             ));
         }
+
+        Self::validate_hash("chunk hash", &hash)?;
 
         self.chunks.push(ChunkInfo {
             index,
@@ -144,6 +163,11 @@ impl Manifest {
             ));
         }
 
+        Self::validate_hash("file_hash", &manifest.file_hash)?;
+        for chunk in &manifest.chunks {
+            Self::validate_hash("chunk hash", &chunk.hash)?;
+        }
+
         Ok(manifest)
     }
 }
@@ -156,7 +180,7 @@ mod tests {
     fn create_test_manifest() -> Manifest {
         Manifest::new(
             "test.bin".to_string(),
-            "abc123".to_string(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
             1000,
             100,
             "npub1test".to_string(),
@@ -168,8 +192,10 @@ mod tests {
     #[test]
     fn test_add_chunk_success() {
         let mut manifest = create_test_manifest();
-        assert!(manifest.add_chunk(0, "note1abc".to_string(), "chunk0".to_string()).is_ok());
-        assert!(manifest.add_chunk(5, "note1def".to_string(), "chunk5".to_string()).is_ok());
+        let hash0 = "0".repeat(64);
+        let hash5 = "1".repeat(64);
+        assert!(manifest.add_chunk(0, "note1abc".to_string(), hash0).is_ok());
+        assert!(manifest.add_chunk(5, "note1def".to_string(), hash5).is_ok());
         assert_eq!(manifest.chunks.len(), 2);
     }
 
@@ -177,7 +203,7 @@ mod tests {
     fn test_add_chunk_out_of_bounds() {
         let mut manifest = create_test_manifest();
         // total_chunks = 10 (1000 / 100), so index 10 is out of bounds
-        let result = manifest.add_chunk(10, "note1xxx".to_string(), "chunkX".to_string());
+        let result = manifest.add_chunk(10, "note1xxx".to_string(), "2".repeat(64));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("out of bounds"));
     }
@@ -185,9 +211,11 @@ mod tests {
     #[test]
     fn test_add_chunk_duplicate_index() {
         let mut manifest = create_test_manifest();
-        manifest.add_chunk(3, "note1first".to_string(), "chunk3".to_string()).unwrap();
+        manifest
+            .add_chunk(3, "note1first".to_string(), "3".repeat(64))
+            .unwrap();
 
-        let result = manifest.add_chunk(3, "note1second".to_string(), "chunk3dup".to_string());
+        let result = manifest.add_chunk(3, "note1second".to_string(), "4".repeat(64));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Duplicate"));
     }
@@ -198,7 +226,9 @@ mod tests {
         let path = temp_dir.path().join("manifest.nostrsave");
 
         let mut manifest = create_test_manifest();
-        manifest.add_chunk(0, "note1abc".to_string(), "chunk0".to_string()).unwrap();
+        manifest
+            .add_chunk(0, "note1abc".to_string(), "5".repeat(64))
+            .unwrap();
         manifest.save_to_file(&path).unwrap();
 
         let loaded = Manifest::load_from_file(&path).unwrap();
@@ -230,7 +260,7 @@ mod tests {
         let json = r#"{
             "version": 99,
             "file_name": "test.bin",
-            "file_hash": "abc123",
+            "file_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "file_size": 1000,
             "chunk_size": 100,
             "total_chunks": 10,
@@ -249,5 +279,39 @@ mod tests {
         let result = Manifest::load_from_file(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unsupported manifest version"));
+    }
+
+    #[test]
+    fn test_load_rejects_invalid_hashes() {
+        use std::io::Write;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("manifest.nostrsave");
+
+        let json = r#"{
+            "version": 2,
+            "file_name": "test.bin",
+            "file_hash": "abc123",
+            "file_size": 1000,
+            "chunk_size": 100,
+            "total_chunks": 10,
+            "created_at": 1234567890,
+            "pubkey": "npub1test",
+            "chunks": [
+                {"index": 0, "event_id": "note1abc", "hash": "short"}
+            ],
+            "relays": ["wss://relay.example.com"],
+            "encryption": "none"
+        }"#;
+
+        let mut file = File::create(&path).unwrap();
+        file.write_all(json.as_bytes()).unwrap();
+        file.flush().unwrap();
+        drop(file);
+
+        let result = Manifest::load_from_file(&path);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("file_hash") || msg.contains("chunk hash"));
     }
 }
