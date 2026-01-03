@@ -345,20 +345,36 @@ pub async fn discover_relays_from_index(
     let nip65_filter = Filter::new().kind(relay_list_kind()).limit(100);
 
     // Fetch NIP-66 events
-    if let Ok(nip66_events) = client.fetch_events(nip66_filter, timeout).await {
-        for event in nip66_events.iter() {
-            if let Some(relay_url) = extract_relay_from_nip66(event) {
-                discovered.insert(relay_url);
+    match client.fetch_events(nip66_filter, timeout).await {
+        Ok(nip66_events) => {
+            for event in nip66_events.iter() {
+                if let Some(relay_url) = extract_relay_from_nip66(event) {
+                    discovered.insert(relay_url);
+                }
             }
+        }
+        Err(e) => {
+            eprintln!(
+                "  Warning: Failed to fetch NIP-66 relay discovery events (kind 30166): {}",
+                e
+            );
         }
     }
 
     // Fetch NIP-65 events
-    if let Ok(nip65_events) = client.fetch_events(nip65_filter, timeout).await {
-        for event in nip65_events.iter() {
-            for relay_url in extract_relays_from_nip65(event) {
-                discovered.insert(relay_url);
+    match client.fetch_events(nip65_filter, timeout).await {
+        Ok(nip65_events) => {
+            for event in nip65_events.iter() {
+                for relay_url in extract_relays_from_nip65(event) {
+                    discovered.insert(relay_url);
+                }
             }
+        }
+        Err(e) => {
+            eprintln!(
+                "  Warning: Failed to fetch NIP-65 relay list events (kind 10002): {}",
+                e
+            );
         }
     }
 
