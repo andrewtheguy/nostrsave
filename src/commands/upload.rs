@@ -9,6 +9,7 @@ use crate::nostr::{
 };
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
 use indicatif::{ProgressBar, ProgressStyle};
+use log::{error, warn};
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
 use std::io::{self, Write};
@@ -87,7 +88,7 @@ pub async fn execute(
     let keys = Keys::parse(&private_key)?;
 
     let data_relays = get_data_relays()?;
-    let index_relays = get_index_relays();
+    let index_relays = get_index_relays()?;
 
     // 2. Verify file exists
     if !file.exists() {
@@ -165,13 +166,13 @@ pub async fn execute(
                     // Check if error is transient and worth retrying
                     if is_transient_error(&e) && attempt < SESSION_OPEN_RETRIES {
                         if verbose {
-                            eprintln!(
+                            warn!(
                                 "Session open failed (attempt {}/{}): {}",
                                 attempt + 1,
                                 SESSION_OPEN_RETRIES + 1,
                                 e
                             );
-                            eprintln!("Retrying in {}ms...", SESSION_RETRY_DELAY_MS);
+                            warn!("Retrying in {}ms...", SESSION_RETRY_DELAY_MS);
                         }
                         tokio::time::sleep(Duration::from_millis(SESSION_RETRY_DELAY_MS)).await;
                         last_error = Some(e);
@@ -186,16 +187,19 @@ pub async fn execute(
         // Handle session open failure after retries
         if !session_opened {
             if let Some(e) = last_error {
-                eprintln!("Error: Could not open existing session after {} attempts", SESSION_OPEN_RETRIES + 1);
-                eprintln!("Details: {}", e);
-                eprintln!("Full error chain: {:?}", e);
+                error!(
+                    "Could not open existing session after {} attempts",
+                    SESSION_OPEN_RETRIES + 1
+                );
+                error!("Details: {}", e);
+                error!("Full error chain: {:?}", e);
 
                 // Check if this is a corruption error that requires deletion
                 if is_corruption_error(&e) {
-                    eprintln!("\nThe session database appears to be corrupted or incompatible.");
+                    error!("The session database appears to be corrupted or incompatible.");
 
                     if force {
-                        eprintln!("--force specified, deleting corrupted session...");
+                        warn!("--force specified, deleting corrupted session...");
                         UploadSession::delete(&file_hash_full)?;
                     } else {
                         print!("Delete corrupted session and start fresh? [y/N] ");
@@ -253,7 +257,7 @@ pub async fn execute(
                 }
             }
             Err(e) => {
-                eprintln!("  Failed to add relay {}: {}", relay, e);
+                warn!("Failed to add relay {}: {}", relay, e);
             }
         }
     }
@@ -301,7 +305,7 @@ pub async fn execute(
         keys.public_key().to_bech32()?,
         data_relays.clone(),
         encryption,
-    );
+    )?;
 
     println!("Encryption: {}", encryption);
 
@@ -399,8 +403,8 @@ pub async fn execute(
 
                         if verbose {
                             pb.suspend(|| {
-                                eprintln!(
-                                    "  Chunk {} failed (attempt {}/{}), retrying in {}ms...",
+                                warn!(
+                                    "Chunk {} failed (attempt {}/{}), retrying in {}ms...",
                                     chunk.index,
                                     attempt + 1,
                                     MAX_RETRIES + 1,
@@ -454,7 +458,7 @@ pub async fn execute(
         encryption,
     )?;
     if let Err(e) = publish_file_index_to_relays(&client, &keys, entry.clone(), verbose).await {
-        eprintln!("  Warning: Failed to publish file index to data relays: {}", e);
+        warn!("Failed to publish file index to data relays: {}", e);
     }
 
     client.disconnect().await;
@@ -513,11 +517,9 @@ async fn publish_to_index_relays(
             Ok(_) => {
                 added_count += 1;
             }
-            Err(e) => {
-                if verbose {
-                    eprintln!("  Failed to add index relay {}: {}", relay, e);
+                Err(e) => {
+                    warn!("Failed to add index relay {}: {}", relay, e);
                 }
-            }
         }
     }
 
@@ -594,7 +596,7 @@ async fn fetch_current_index(
                     }
                     Err(e) => {
                         if verbose {
-                            eprintln!("  Failed to parse current index: {}", e);
+                            warn!("Failed to parse current index: {}", e);
                         }
                         None
                     }
@@ -605,7 +607,7 @@ async fn fetch_current_index(
         }
         Err(e) => {
             if verbose {
-                eprintln!("  Failed to fetch current index: {}", e);
+                warn!("Failed to fetch current index: {}", e);
             }
             None
         }
@@ -710,8 +712,8 @@ async fn publish_file_index_to_relays(
                     let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
 
                     if verbose {
-                        eprintln!(
-                            "  Archive {} failed (attempt {}/{}), retrying in {}ms...",
+                        warn!(
+                            "Archive {} failed (attempt {}/{}), retrying in {}ms...",
                             new_archive_number,
                             attempt + 1,
                             MAX_RETRIES + 1,
@@ -763,8 +765,8 @@ async fn publish_file_index_to_relays(
                     let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
 
                     if verbose {
-                        eprintln!(
-                            "  Current index failed (attempt {}/{}), retrying in {}ms...",
+                        warn!(
+                            "Current index failed (attempt {}/{}), retrying in {}ms...",
                             attempt + 1,
                             MAX_RETRIES + 1,
                             delay
@@ -778,10 +780,8 @@ async fn publish_file_index_to_relays(
 
     if let Some(e) = last_error {
         // Archive was published but current index failed - log warning
-        eprintln!(
-            "  Warning: Archive {} published but current index update failed.\n  \
-             The archive may be orphaned until the next successful upload.\n  \
-             Error: {}",
+        warn!(
+            "Archive {} published but current index update failed. The archive may be orphaned until the next successful upload. Error: {}",
             new_archive_number, e
         );
         return Err(anyhow::anyhow!(

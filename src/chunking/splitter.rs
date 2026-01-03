@@ -46,7 +46,7 @@ impl ChunkIterator {
     /// Call this after iterating through all chunks.
     pub fn finalize(self) -> ChunkIteratorResult {
         ChunkIteratorResult {
-            file_hash: format!("sha256:{}", hex::encode(self.file_hasher.finalize())),
+            file_hash: hex::encode(self.file_hasher.finalize()),
             //total_chunks: self.index,
         }
     }
@@ -81,7 +81,7 @@ impl Iterator for ChunkIterator {
                 let chunk = Chunk {
                     index: self.index,
                     data: chunk_data,
-                    hash: format!("sha256:{}", chunk_hash),
+                    hash: chunk_hash,
                 };
 
                 self.index += 1;
@@ -157,7 +157,7 @@ impl FileChunker {
             hasher.update(&buffer[..bytes_read]);
         }
 
-        Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+        Ok(hex::encode(hasher.finalize()))
     }
 }
 

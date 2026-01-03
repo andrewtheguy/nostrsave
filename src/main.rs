@@ -11,11 +11,14 @@ mod session;
 
 use clap::Parser;
 use cli::{Cli, Commands};
+use env_logger::Env;
 use nostr_sdk::ToBech32;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let default_level = if cli.verbose { "info" } else { "warn" };
+    env_logger::Builder::from_env(Env::default().default_filter_or(default_level)).init();
 
     match cli.command {
         Commands::Upload {

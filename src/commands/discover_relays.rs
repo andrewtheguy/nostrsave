@@ -6,6 +6,7 @@ use crate::relay::{
 };
 use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::warn;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs::File;
@@ -103,26 +104,26 @@ pub async fn execute(
                         all_relays.extend(relays);
                     }
                     Err(e) => {
-                        eprintln!("  Warning: Failed to fetch from nostr.watch: {}", e);
+                        warn!("Failed to fetch from nostr.watch: {}", e);
                     }
                 }
 
                 // Add index relays
-                let index_relays = get_index_relays();
+                let index_relays = get_index_relays()?;
                 println!("  Added {} index relays", index_relays.len());
                 sources.push(format!("index relays ({} relays)", index_relays.len()));
                 all_relays.extend(index_relays);
             }
             RelaySource::ConfiguredOnly => {
                 // Only use configured index relays
-                let index_relays = get_index_relays();
+                let index_relays = get_index_relays()?;
                 println!("  Using {} configured index relays", index_relays.len());
                 sources.push(format!("index relays ({} relays)", index_relays.len()));
                 all_relays.extend(index_relays);
             }
             RelaySource::IndexRelays => {
                 // Fetch NIP-66/NIP-65 relay events from index relays
-                let index_relays = get_index_relays();
+                let index_relays = get_index_relays()?;
                 println!(
                     "  Querying {} index relays for NIP-66/NIP-65 events...",
                     index_relays.len()
@@ -137,7 +138,7 @@ pub async fn execute(
                         all_relays.extend(relays);
                     }
                     Err(e) => {
-                        eprintln!("  Warning: Failed to fetch relay events: {}", e);
+                        warn!("Failed to fetch relay events: {}", e);
                     }
                 }
 

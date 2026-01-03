@@ -1,7 +1,8 @@
+use log::warn;
 use nostr_sdk::Keys;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use url::Url;
+use url::{Host, Url};
 
 // ============================================================================
 // Encryption Algorithm
@@ -77,7 +78,7 @@ pub struct RelaysConfig {
 const DEFAULT_INDEX_RELAYS: &[&str] = &[
     "wss://nos.lol",
     //"wss://relay.damus.io", // acceptable for index queries; not recommended for high-volume operations due to rate limiting
-    "wss://relay.nostr.band",
+    //"wss://relay.nostr.band",
     "wss://relay.nostr.net",
     "wss://relay.primal.net",
     "wss://relay.snort.social",
@@ -138,11 +139,11 @@ pub fn load_config() -> Option<Config> {
                 Ok(content) => match toml::from_str(&content) {
                     Ok(config) => return Some(config),
                     Err(e) => {
-                        eprintln!("Warning: Failed to parse {}: {}", path.display(), e);
+                        warn!("Failed to parse {}: {}", path.display(), e);
                     }
                 },
                 Err(e) => {
-                    eprintln!("Warning: Failed to read {}: {}", path.display(), e);
+                    warn!("Failed to read {}: {}", path.display(), e);
                 }
             }
         }
@@ -222,11 +223,44 @@ pub fn get_private_key(key_file_override: Option<&str>) -> anyhow::Result<String
 // ============================================================================
 
 /// Validate a relay URL using proper URL parsing
-fn validate_relay_url(input: &str) -> Result<String, String> {
+fn is_valid_domain_label(label: &str) -> bool {
+    if label.is_empty() || label.len() > 63 {
+        return false;
+    }
+    let bytes = label.as_bytes();
+    if !bytes[0].is_ascii_alphanumeric() || !bytes[bytes.len() - 1].is_ascii_alphanumeric() {
+        return false;
+    }
+    label
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+fn is_valid_domain(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if !host.is_ascii() {
+        return false;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    if labels.last().is_some_and(|label| label.len() < 2) {
+        return false;
+    }
+    labels.iter().all(|label| is_valid_domain_label(label))
+}
+
+pub(crate) fn validate_relay_url(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
 
     if trimmed.is_empty() {
         return Err("Empty URL".to_string());
+    }
+    if trimmed.contains(',') {
+        return Err(format!("Invalid URL '{}': contains comma", trimmed));
     }
 
     // Parse URL using the url crate
@@ -242,23 +276,52 @@ fn validate_relay_url(input: &str) -> Result<String, String> {
         ));
     }
 
-    // Validate host is present and well-formed
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| "Missing host".to_string())?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(format!(
+            "Invalid URL '{}': userinfo not allowed",
+            trimmed
+        ));
+    }
 
-    if host.is_empty() || host.starts_with('.') || host.ends_with('.') {
-        return Err(format!("Invalid host '{}': {}", host, trimmed));
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(format!(
+            "Invalid URL '{}': query/fragment not allowed",
+            trimmed
+        ));
+    }
+
+    if let Some(port) = parsed.port() {
+        if port == 0 {
+            return Err(format!(
+                "Invalid URL '{}': port must be > 0",
+                trimmed
+            ));
+        }
+    }
+
+    // Validate host is present and looks like a DNS name or IP address
+    let host = parsed.host().ok_or_else(|| "Missing host".to_string())?;
+    match host {
+        Host::Domain(domain) => {
+            if !is_valid_domain(domain) {
+                return Err(format!("Invalid host '{}': {}", domain, trimmed));
+            }
+        }
+        Host::Ipv4(_) | Host::Ipv6(_) => {}
     }
 
     Ok(trimmed.to_string())
 }
 
-/// Validate and filter relay URLs
-fn validate_relay_list(urls: &[String]) -> Vec<String> {
-    urls.iter()
-        .filter_map(|url| validate_relay_url(url).ok())
-        .collect()
+/// Validate relay URLs, failing fast on the first invalid entry
+pub(crate) fn validate_relay_list(urls: &[String]) -> anyhow::Result<Vec<String>> {
+    let mut relays = Vec::with_capacity(urls.len());
+    for url in urls {
+        let validated = validate_relay_url(url)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        relays.push(validated);
+    }
+    Ok(relays)
 }
 
 /// Get data relays from config (required for upload)
@@ -272,7 +335,7 @@ pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
         )
     })?;
 
-    let relays = validate_relay_list(&data_relays.urls);
+    let relays = validate_relay_list(&data_relays.urls)?;
 
     if relays.is_empty() {
         return Err(anyhow::anyhow!(
@@ -285,19 +348,22 @@ pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
 
 /// Get index relays from config, or fallback to defaults
 /// Used for listing files and storing manifests
-pub fn get_index_relays() -> Vec<String> {
+pub fn get_index_relays() -> anyhow::Result<Vec<String>> {
     // Try to load from config
     if let Some(config) = load_config() {
         if let Some(index_relays) = config.index_relays {
-            let relays = validate_relay_list(&index_relays.urls);
-            if !relays.is_empty() {
-                return relays;
+            let relays = validate_relay_list(&index_relays.urls)?;
+            if relays.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No valid relay URLs in [index_relays] section"
+                ));
             }
+            return Ok(relays);
         }
     }
 
     // Fallback to defaults
-    DEFAULT_INDEX_RELAYS.iter().map(|s| s.to_string()).collect()
+    Ok(DEFAULT_INDEX_RELAYS.iter().map(|s| s.to_string()).collect())
 }
 
 // ============================================================================
@@ -329,6 +395,9 @@ mod tests {
         assert!(validate_relay_url("wss://nos.lol").is_ok());
         assert!(validate_relay_url("ws://localhost:8080").is_ok());
         assert!(validate_relay_url("wss://relay.example.com/path").is_ok());
+        assert!(validate_relay_url("wss://relay.example.com/nostr").is_ok());
+        assert!(validate_relay_url("wss://1.2.3.4").is_ok());
+        assert!(validate_relay_url("wss://[::1]").is_ok());
     }
 
     #[test]
@@ -338,12 +407,17 @@ mod tests {
         assert!(validate_relay_url("relay.damus.io").is_err());
         assert!(validate_relay_url("wss://").is_err());
         assert!(validate_relay_url("wss://.invalid").is_err());
+        assert!(validate_relay_url("wss://relay.damus.io,").is_err());
+        assert!(validate_relay_url("wss://relay..example.com").is_err());
+        assert!(validate_relay_url("wss://-bad.example.com").is_err());
+        assert!(validate_relay_url("wss://bad-.example.com").is_err());
+        assert!(validate_relay_url("wss://bad_example.com").is_err());
     }
 
     #[test]
     fn test_get_index_relays_returns_defaults() {
         // When no config, should return defaults
-        let relays = get_index_relays();
+        let relays = get_index_relays().unwrap();
         assert!(!relays.is_empty());
         assert!(relays.iter().all(|r| r.starts_with("wss://")));
     }

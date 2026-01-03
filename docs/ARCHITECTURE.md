@@ -88,9 +88,9 @@ Tags:
 **Manifest JSON:**
 ```json
 {
-  "version": 1,
+  "version": 2,
   "file_name": "photo.jpg",
-  "file_hash": "sha256:abc123...",
+  "file_hash": "abc123...",
   "file_size": 1234567,
   "chunk_size": 32768,
   "total_chunks": 19,
@@ -98,7 +98,7 @@ Tags:
   "pubkey": "npub1...",
   "encryption": "nip44",
   "chunks": [
-    {"index": 0, "event_id": "note1...", "hash": "sha256:..."},
+    {"index": 0, "event_id": "note1...", "hash": "def123..."},
     ...
   ],
   "relays": ["wss://relay.damus.io", ...]
@@ -123,7 +123,7 @@ Tags:
   "version": 2,
   "entries": [
     {
-      "file_hash": "sha256:abc123...",
+      "file_hash": "abc123...",
       "file_name": "photo.jpg",
       "file_size": 1234567,
       "uploaded_at": 1704067200,

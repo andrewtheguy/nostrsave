@@ -116,7 +116,7 @@ const DEFAULT_MAX_IDS_PER_FILTER: usize = 100;
 ///
 /// # Example
 /// ```ignore
-/// let filters = create_chunk_filter_for_indices("sha256:abc", &[0, 5, 10], Some(&pk))?;
+/// let filters = create_chunk_filter_for_indices("abc", &[0, 5, 10], Some(&pk))?;
 /// for filter in filters {
 ///     let events = client.fetch_events(filter, timeout).await?;
 ///     // process events...

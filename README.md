@@ -53,7 +53,8 @@ nostrsave upload photo.jpg
 nostrsave list
 
 # Download a file by hash (decrypts automatically)
-nostrsave download sha256:abc123...
+nostrsave download abc123...
+# (also accepts sha256:<hash>)
 
 # Upload without encryption
 nostrsave upload photo.jpg --encryption none
