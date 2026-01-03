@@ -75,7 +75,7 @@ pub struct RelaysConfig {
 
 /// Default index relays (verified working relays for manifest/index storage)
 const DEFAULT_INDEX_RELAYS: &[&str] = &[
-    // "wss://relay.damus.io", too much rate limiting
+    "wss://relay.damus.io", // acceptable for index queries; not recommended for high-volume operations due to rate limiting
     "wss://nos.lol",
     "wss://nostr.wine",
     "wss://relay.primal.net",

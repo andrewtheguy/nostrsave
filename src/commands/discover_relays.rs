@@ -1,3 +1,4 @@
+use crate::cli::RelaySource;
 use crate::config::get_index_relays;
 use crate::relay::{discover_relays_from_nostr_watch, test_relays_concurrent, RelayTestResult};
 use chrono::Utc;
@@ -30,7 +31,7 @@ struct DiscoveryMetadata {
 struct DiscoverySettings {
     timeout_secs: u64,
     concurrent_tests: usize,
-    configured_only: bool,
+    relay_source: String,
     chunk_size: usize,
 }
 
@@ -43,8 +44,9 @@ struct DiscoverySummary {
 }
 
 pub async fn execute(
+    relay: Option<String>,
+    relay_source: Option<RelaySource>,
     output: PathBuf,
-    configured_only: bool,
     timeout_secs: u64,
     concurrent: usize,
     chunk_size: usize,
@@ -56,25 +58,44 @@ pub async fn execute(
     let mut all_relays: HashSet<String> = HashSet::new();
     let mut sources: Vec<String> = Vec::new();
 
-    // 1. Fetch from nostr.watch (unless configured_only)
-    if !configured_only {
-        match discover_relays_from_nostr_watch().await {
-            Ok(relays) => {
-                println!("  Fetched {} relays from nostr.watch", relays.len());
-                sources.push(format!("nostr.watch ({} relays)", relays.len()));
-                all_relays.extend(relays);
+    // If a single relay is specified, only test that one
+    if let Some(ref relay_url) = relay {
+        println!("  Testing single relay: {}", relay_url);
+        sources.push(format!("command line ({})", relay_url));
+        all_relays.insert(relay_url.clone());
+    } else {
+        // Use relay_source to determine where to fetch relays from
+        let source = relay_source.ok_or_else(|| anyhow::anyhow!("relay_source required when relay not provided"))?;
+
+        match source {
+            RelaySource::Nostrwatch => {
+                // Fetch from nostr.watch
+                match discover_relays_from_nostr_watch().await {
+                    Ok(relays) => {
+                        println!("  Fetched {} relays from nostr.watch", relays.len());
+                        sources.push(format!("nostr.watch ({} relays)", relays.len()));
+                        all_relays.extend(relays);
+                    }
+                    Err(e) => {
+                        eprintln!("  Warning: Failed to fetch from nostr.watch: {}", e);
+                    }
+                }
+
+                // Add index relays
+                let index_relays = get_index_relays();
+                println!("  Added {} index relays", index_relays.len());
+                sources.push(format!("index relays ({} relays)", index_relays.len()));
+                all_relays.extend(index_relays);
             }
-            Err(e) => {
-                eprintln!("  Warning: Failed to fetch from nostr.watch: {}", e);
+            RelaySource::ConfiguredOnly => {
+                // Only use configured index relays
+                let index_relays = get_index_relays();
+                println!("  Using {} configured index relays", index_relays.len());
+                sources.push(format!("index relays ({} relays)", index_relays.len()));
+                all_relays.extend(index_relays);
             }
         }
     }
-
-    // 2. Add index relays (from config or defaults)
-    let index_relays = get_index_relays();
-    println!("  Added {} index relays", index_relays.len());
-    sources.push(format!("index relays ({} relays)", index_relays.len()));
-    all_relays.extend(index_relays);
 
     if all_relays.is_empty() {
         return Err(anyhow::anyhow!("No relays to test"));
@@ -102,7 +123,16 @@ pub async fn execute(
 
     pb.finish_and_clear();
 
-    // 5. Separate working and failed relays
+    // 5. Single relay mode: print JSON to stdout and exit early
+    if relay.is_some() {
+        let result = results.first()
+            .ok_or_else(|| anyhow::anyhow!("relay test returned no results"))?;
+        let json = serde_json::to_string_pretty(result)?;
+        println!("{}", json);
+        return Ok(());
+    }
+
+    // 6. Separate working and failed
     let mut working: Vec<RelayTestResult> = results.iter().filter(|r| r.is_working()).cloned().collect();
     let mut failed: Vec<RelayTestResult> = results.iter().filter(|r| !r.is_working()).cloned().collect();
 
@@ -111,7 +141,7 @@ pub async fn execute(
     // Sort failed relays alphabetically
     failed.sort_by(|a, b| a.url.cmp(&b.url));
 
-    // 6. Print results
+    // 7. Bulk mode: print summary and save to file
     println!("Results:");
     for result in &working {
         let connect = result.latency_ms.map(|ms| format!("{}ms", ms)).unwrap_or_else(|| "?".to_string());
@@ -134,7 +164,7 @@ pub async fn execute(
         results.len()
     );
 
-    // 7. Build JSON output with detailed metadata
+    // Build JSON output with detailed metadata
     let output_data = RelayDiscoveryOutput {
         metadata: DiscoveryMetadata {
             generated_by: "nostrsave discover-relays".to_string(),
@@ -143,7 +173,11 @@ pub async fn execute(
             settings: DiscoverySettings {
                 timeout_secs,
                 concurrent_tests: concurrent,
-                configured_only,
+                // relay_source is guaranteed Some: single-relay mode returns early, bulk mode validates via ok_or_else
+                relay_source: match relay_source.unwrap() {
+                    RelaySource::Nostrwatch => "nostrwatch".to_string(),
+                    RelaySource::ConfiguredOnly => "configured-only".to_string(),
+                },
                 chunk_size,
             },
             summary: DiscoverySummary {
@@ -157,7 +191,7 @@ pub async fn execute(
         failed_relays: failed,
     };
 
-    // 8. Save to JSON file
+    // Save to JSON file
     let json = serde_json::to_string_pretty(&output_data)?;
     let mut file = File::create(&output)?;
     file.write_all(json.as_bytes())?;

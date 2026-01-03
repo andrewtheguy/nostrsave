@@ -54,15 +54,17 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", keys.public_key().to_bech32()?);
         }
         Commands::DiscoverRelays {
+            relay,
+            relay_source,
             output,
-            configured_only,
             timeout,
             concurrent,
             chunk_size,
         } => {
             commands::discover_relays::execute(
+                relay,
+                relay_source,
                 output,
-                configured_only,
                 timeout,
                 concurrent,
                 chunk_size,
