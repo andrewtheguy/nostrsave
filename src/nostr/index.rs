@@ -53,15 +53,17 @@ impl FileIndexEntry {
         uploaded_at: u64,
         encryption: EncryptionAlgorithm,
     ) -> anyhow::Result<Self> {
+        let normalized_hash = file_hash.to_ascii_lowercase();
+
         // Validate file_hash format: 64 hex chars
-        if file_hash.len() != SHA256_HEX_LEN {
+        if normalized_hash.len() != SHA256_HEX_LEN {
             return Err(anyhow::anyhow!(
                 "Invalid file_hash: expected {} hex characters, got {}",
                 SHA256_HEX_LEN,
-                file_hash.len()
+                normalized_hash.len()
             ));
         }
-        if !file_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !normalized_hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(anyhow::anyhow!(
                 "Invalid file_hash: contains non-hex characters"
             ));
@@ -108,7 +110,7 @@ impl FileIndexEntry {
         }
 
         Ok(Self {
-            file_hash,
+            file_hash: normalized_hash,
             file_name,
             file_size,
             uploaded_at,
@@ -534,6 +536,20 @@ mod tests {
         assert_eq!(entry.file_size(), 1024);
         assert_eq!(entry.uploaded_at(), 1234567890);
         assert_eq!(entry.encryption(), EncryptionAlgorithm::Nip44);
+    }
+
+    #[test]
+    fn test_file_index_entry_normalizes_hash() {
+        let input = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+        let entry = FileIndexEntry::new(
+            input.to_string(),
+            "test.txt".to_string(),
+            1024,
+            1234567890,
+            EncryptionAlgorithm::Nip44,
+        )
+        .unwrap();
+        assert_eq!(entry.file_hash(), TEST_HASH);
     }
 
     #[test]

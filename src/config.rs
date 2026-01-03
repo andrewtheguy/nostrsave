@@ -242,7 +242,14 @@ fn is_valid_domain(host: &str) -> bool {
     if !host.is_ascii() {
         return false;
     }
-    host.split('.').all(is_valid_domain_label)
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    if labels.last().is_some_and(|label| label.len() < 2) {
+        return false;
+    }
+    labels.iter().all(|label| is_valid_domain_label(label))
 }
 
 pub(crate) fn validate_relay_url(input: &str) -> Result<String, String> {

@@ -125,6 +125,12 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_relay_url_accepts_ws() {
+        let input = "ws://relay.nostr.band";
+        assert_eq!(parse_relay_url(input).unwrap(), input);
+    }
+
+    #[test]
     fn test_parse_relay_url_rejects_trailing_comma() {
         assert!(parse_relay_url("wss://relay.nostr.band,").is_err());
     }
