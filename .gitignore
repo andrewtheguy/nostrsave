@@ -2,3 +2,4 @@
 *.nostrsave
 /target
 relays.json
+tmp/

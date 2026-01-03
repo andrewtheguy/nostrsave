@@ -182,13 +182,22 @@ The `discover-relays` command tests relays for file storage capability.
 
 ### Relay Sources
 
-1. **nostr.watch API** (`https://api.nostr.watch/v1/online`)
-   - Returns list of currently online relays
-   - Skipped if `--configured-only` flag is used
+Use `--relay-source <SOURCE>` to select discovery method:
 
-2. **Index relays** (from config or built-in defaults)
-   - Always included in discovery
-   - Typically more reliable for file index storage
+1. **nostrwatch** - nostr.watch API (`https://api.nostr.watch/v1/online`)
+   - Returns list of currently online relays
+   - Also includes configured index relays
+
+2. **configured-only** - Index relays only
+   - Tests only the configured index relays (from config or built-in defaults)
+
+3. **index-relays** - NIP-66/NIP-65 discovery
+   - Queries index relays for relay discovery events (NIP-66, kind 30166)
+   - Also fetches user relay lists (NIP-65, kind 10002)
+   - Discovers relays published by relay monitors and users
+
+Single relay mode: `nostrsave discover-relays wss://relay.example.com`
+- Tests one relay and outputs JSON to stdout (no file saved)
 
 ### Reliability Criteria
 
@@ -248,9 +257,11 @@ The test uses the same event kind (30078), encryption (NIP-44), and chunk event 
 The output can be fed to `best-relays` to extract the fastest working relays:
 
 ```bash
-nostrsave discover-relays -o relays.json
-nostrsave best-relays relays.json --count 5
+nostrsave discover-relays --relay-source nostrwatch
+nostrsave best-relays relays-nostrwatch.json --count 5
 ```
+
+Output files are named with a source suffix: `relays-nostrwatch.json`, `relays-configured.json`, `relays-index.json`.
 
 ## Security Considerations
 
