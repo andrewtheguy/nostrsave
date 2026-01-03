@@ -2,6 +2,7 @@ use crate::config::EncryptionAlgorithm;
 use crate::crypto;
 use crate::nostr::{create_chunk_event, create_chunk_filter, ChunkMetadata};
 use futures::stream::{self, StreamExt};
+use log::warn;
 use nostr_sdk::prelude::*;
 use rand::Rng;
 use serde::Serialize;
@@ -354,7 +355,7 @@ pub async fn discover_relays_from_index(
             }
         }
         Err(e) => {
-            eprintln!(
+            warn!(
                 "  Warning: Failed to fetch NIP-66 relay discovery events (kind 30166): {}",
                 e
             );
@@ -371,7 +372,7 @@ pub async fn discover_relays_from_index(
             }
         }
         Err(e) => {
-            eprintln!(
+            warn!(
                 "  Warning: Failed to fetch NIP-65 relay list events (kind 10002): {}",
                 e
             );

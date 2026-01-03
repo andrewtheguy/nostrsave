@@ -4,6 +4,7 @@ use crate::nostr::{
     parse_file_index_event,
 };
 use chrono::{TimeZone, Utc};
+use log::warn;
 use nostr_sdk::prelude::*;
 use std::time::Duration;
 
@@ -58,7 +59,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
             Ok(_) => added_count += 1,
             Err(e) => {
                 if verbose {
-                    eprintln!("  Failed to add relay {}: {}", relay, e);
+                    warn!("Failed to add relay {}: {}", relay, e);
                 }
             }
         }

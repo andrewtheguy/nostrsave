@@ -6,6 +6,7 @@ use crate::relay::{
 };
 use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::warn;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs::File;
@@ -103,7 +104,7 @@ pub async fn execute(
                         all_relays.extend(relays);
                     }
                     Err(e) => {
-                        eprintln!("  Warning: Failed to fetch from nostr.watch: {}", e);
+                        warn!("Failed to fetch from nostr.watch: {}", e);
                     }
                 }
 
@@ -137,7 +138,7 @@ pub async fn execute(
                         all_relays.extend(relays);
                     }
                     Err(e) => {
-                        eprintln!("  Warning: Failed to fetch relay events: {}", e);
+                        warn!("Failed to fetch relay events: {}", e);
                     }
                 }
 

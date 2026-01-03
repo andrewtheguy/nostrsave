@@ -1,3 +1,4 @@
+use log::warn;
 use nostr_sdk::Keys;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -138,11 +139,11 @@ pub fn load_config() -> Option<Config> {
                 Ok(content) => match toml::from_str(&content) {
                     Ok(config) => return Some(config),
                     Err(e) => {
-                        eprintln!("Warning: Failed to parse {}: {}", path.display(), e);
+                        warn!("Failed to parse {}: {}", path.display(), e);
                     }
                 },
                 Err(e) => {
-                    eprintln!("Warning: Failed to read {}: {}", path.display(), e);
+                    warn!("Failed to read {}: {}", path.display(), e);
                 }
             }
         }

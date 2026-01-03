@@ -7,6 +7,7 @@ use crate::nostr::{
 };
 use crate::session::{compute_hash_sha512, DownloadMeta, DownloadSession};
 use indicatif::{ProgressBar, ProgressStyle};
+use log::warn;
 use nostr_sdk::prelude::*;
 use sha2::{Digest, Sha256};
 use futures::StreamExt;
@@ -145,7 +146,7 @@ async fn fetch_manifest_from_relays(
                         }
                         Err(e) => {
                             if verbose {
-                                eprintln!("    Failed to parse manifest: {}", e);
+                                warn!("Failed to parse manifest: {}", e);
                             }
                         }
                     }
@@ -153,7 +154,7 @@ async fn fetch_manifest_from_relays(
             }
             Err(e) => {
                 if verbose {
-                    eprintln!("    Fetch error: {}", e);
+                    warn!("Fetch error: {}", e);
                 }
             }
         }
@@ -270,8 +271,8 @@ pub async fn execute(
                 }
             }
             Err(e) => {
-                eprintln!("Warning: Could not open existing session: {}", e);
-                eprintln!("Starting fresh download...");
+                warn!("Could not open existing session: {}", e);
+                warn!("Starting fresh download...");
                 DownloadSession::delete(&file_hash_full)?;
             }
         }
@@ -378,7 +379,7 @@ pub async fn execute(
 
         if let Err(e) = client.add_relay(relay_url).await {
             if verbose {
-                pb.suspend(|| eprintln!("  Failed to add relay {}: {}", relay_url, e));
+                pb.suspend(|| warn!("Failed to add relay {}: {}", relay_url, e));
             }
             stats.relay_stats.insert(relay_url.clone(), relay_stat);
             continue;
@@ -411,7 +412,7 @@ pub async fn execute(
                             }
                             Err(e) => {
                                 if verbose {
-                                    pb.suspend(|| eprintln!("    Failed to parse event: {}", e));
+                                    pb.suspend(|| warn!("Failed to parse event: {}", e));
                                 }
                             }
                         }
@@ -419,7 +420,7 @@ pub async fn execute(
                 }
                 Err(e) => {
                     if verbose {
-                        pb.suspend(|| eprintln!("    Fetch error: {}", e));
+                        pb.suspend(|| warn!("Fetch error: {}", e));
                     }
                 }
             }
