@@ -27,7 +27,7 @@ curl -fsSL https://andrewtheguy.github.io/nostrsave/install.sh | bash
 Build from source:
 
 ```bash
-cargo install --path .
+cargo build --release
 ```
 
 ## Quick Start
