@@ -43,6 +43,76 @@ fn parse_chunk_size(s: &str) -> Result<usize, String> {
     Ok(value)
 }
 
+/// Parse and validate file hash (sha256:<hash> or raw 64-hex)
+fn parse_file_hash(s: &str) -> Result<String, String> {
+    const SHA256_HEX_LEN: usize = 64;
+
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err("hash cannot be empty".to_string());
+    }
+
+    let raw = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("sha256:") {
+        &trimmed[7..]
+    } else {
+        trimmed
+    };
+
+    if raw.len() != SHA256_HEX_LEN {
+        return Err(format!(
+            "hash must be {} hex characters, got {}",
+            SHA256_HEX_LEN,
+            raw.len()
+        ));
+    }
+    if !raw.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("hash must be hex characters".to_string());
+    }
+
+    Ok(raw.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_file_hash;
+
+    #[test]
+    fn test_parse_file_hash_accepts_raw_hex() {
+        let hash = "20d3323a2bcce6f25498b8911a397503a0a99fa92b6ba58d62788cb42b6e5459";
+        assert_eq!(parse_file_hash(hash).unwrap(), hash);
+    }
+
+    #[test]
+    fn test_parse_file_hash_accepts_sha256_prefix() {
+        let hash = "20d3323a2bcce6f25498b8911a397503a0a99fa92b6ba58d62788cb42b6e5459";
+        let input = format!("sha256:{hash}");
+        assert_eq!(parse_file_hash(&input).unwrap(), hash);
+    }
+
+    #[test]
+    fn test_parse_file_hash_normalizes_case() {
+        let input = "SHA256:20D3323A2BCCE6F25498B8911A397503A0A99FA92B6BA58D62788CB42B6E5459";
+        let expected = "20d3323a2bcce6f25498b8911a397503a0a99fa92b6ba58d62788cb42b6e5459";
+        assert_eq!(parse_file_hash(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_file_hash_rejects_empty() {
+        assert!(parse_file_hash(" ").is_err());
+    }
+
+    #[test]
+    fn test_parse_file_hash_rejects_wrong_length() {
+        assert!(parse_file_hash("abc123").is_err());
+    }
+
+    #[test]
+    fn test_parse_file_hash_rejects_non_hex() {
+        let input = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        assert!(parse_file_hash(input).is_err());
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "nostrsave")]
 #[command(about = "Store and retrieve files on Nostr", long_about = None)]
@@ -92,7 +162,7 @@ pub enum Commands {
     /// Download a file from Nostr relays
     Download {
         /// File hash to fetch manifest from relays (sha256:<hash> or raw 64-hex)
-        #[arg(value_name = "HASH", required_unless_present = "manifest")]
+        #[arg(value_name = "HASH", required_unless_present = "manifest", value_parser = parse_file_hash)]
         hash: Option<String>,
 
         /// Load manifest from local file instead of fetching by hash

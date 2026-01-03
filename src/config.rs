@@ -77,7 +77,7 @@ pub struct RelaysConfig {
 const DEFAULT_INDEX_RELAYS: &[&str] = &[
     "wss://nos.lol",
     //"wss://relay.damus.io", // acceptable for index queries; not recommended for high-volume operations due to rate limiting
-    "wss://relay.nostr.band",
+    //"wss://relay.nostr.band",
     "wss://relay.nostr.net",
     "wss://relay.primal.net",
     "wss://relay.snort.social",
