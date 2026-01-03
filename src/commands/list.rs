@@ -44,7 +44,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
         println!("Using data relays for file index lookup...");
         get_data_relays()?
     } else {
-        get_index_relays()
+        get_index_relays()?
     };
 
     println!("Connecting to {} relays...", relay_list.len());
