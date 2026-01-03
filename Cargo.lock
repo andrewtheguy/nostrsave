@@ -1322,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "nostrsave"
-version = "0.2.15"
+version = "0.2.16"
 dependencies = [
  "anyhow",
  "base64",
