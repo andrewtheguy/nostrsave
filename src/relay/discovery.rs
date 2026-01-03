@@ -258,6 +258,131 @@ pub async fn test_relays_concurrent(
     results
 }
 
+/// NIP-66 Relay Discovery event kind (30166)
+fn relay_discovery_kind() -> Kind {
+    Kind::from_u16(30166)
+}
+
+/// NIP-65 Relay List Metadata event kind (10002)
+fn relay_list_kind() -> Kind {
+    Kind::from_u16(10002)
+}
+
+/// Extract relay URL from a NIP-66 relay discovery event (kind 30166)
+/// The relay URL is stored in the 'd' tag
+fn extract_relay_from_nip66(event: &Event) -> Option<String> {
+    event
+        .tags
+        .iter()
+        .find(|t| t.kind() == TagKind::d())
+        .and_then(|t| t.content())
+        .map(|s| s.to_string())
+        .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
+}
+
+/// Extract relay URLs from a NIP-65 relay list event (kind 10002)
+/// Relay URLs are stored in 'r' tags (single letter tags per NIP-65)
+fn extract_relays_from_nip65(event: &Event) -> Vec<String> {
+    event
+        .tags
+        .iter()
+        .filter(|t| {
+            // NIP-65 uses ["r", "<url>", "<marker>"] tags (single letter 'r')
+            t.single_letter_tag()
+                .map(|slt| slt.character == Alphabet::R)
+                .unwrap_or(false)
+        })
+        .filter_map(|t| t.content())
+        .map(|s| s.to_string())
+        .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
+        .collect()
+}
+
+/// Discover relays by querying seed relays for NIP-66 and NIP-65 events
+/// - NIP-66 (kind 30166): Relay discovery events published by relay monitors
+/// - NIP-65 (kind 10002): Relay list events published by users
+pub async fn discover_relays_from_index(
+    index_relays: &[String],
+    timeout: Duration,
+) -> anyhow::Result<Vec<String>> {
+    use std::collections::HashSet;
+
+    let mut discovered: HashSet<String> = HashSet::new();
+
+    // Create a temporary client for querying
+    let client = Client::default();
+
+    // Add index relays
+    for relay in index_relays {
+        let _ = client.add_relay(relay.to_string()).await;
+    }
+
+    // Connect
+    client.connect().await;
+    client.wait_for_connection(timeout).await;
+
+    // Verify at least one relay connected
+    let connected_count = client
+        .relays()
+        .await
+        .into_iter()
+        .filter(|(_, relay)| relay.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        client.disconnect().await;
+        return Err(anyhow::anyhow!(
+            "Failed to connect to any index relay within timeout"
+        ));
+    }
+
+    // Query for NIP-66 relay discovery events (kind 30166)
+    // These are published by relay monitors
+    let nip66_filter = Filter::new().kind(relay_discovery_kind()).limit(100);
+
+    // Query for NIP-65 relay list events (kind 10002)
+    // These are published by users listing their preferred relays
+    let nip65_filter = Filter::new().kind(relay_list_kind()).limit(100);
+
+    // Fetch NIP-66 events
+    match client.fetch_events(nip66_filter, timeout).await {
+        Ok(nip66_events) => {
+            for event in nip66_events.iter() {
+                if let Some(relay_url) = extract_relay_from_nip66(event) {
+                    discovered.insert(relay_url);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "  Warning: Failed to fetch NIP-66 relay discovery events (kind 30166): {}",
+                e
+            );
+        }
+    }
+
+    // Fetch NIP-65 events
+    match client.fetch_events(nip65_filter, timeout).await {
+        Ok(nip65_events) => {
+            for event in nip65_events.iter() {
+                for relay_url in extract_relays_from_nip65(event) {
+                    discovered.insert(relay_url);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "  Warning: Failed to fetch NIP-65 relay list events (kind 10002): {}",
+                e
+            );
+        }
+    }
+
+    client.disconnect().await;
+
+    Ok(discovered.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

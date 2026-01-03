@@ -1,14 +1,40 @@
 use crate::cli::RelaySource;
 use crate::config::get_index_relays;
-use crate::relay::{discover_relays_from_nostr_watch, test_relays_concurrent, RelayTestResult};
+use crate::relay::{
+    discover_relays_from_index, discover_relays_from_nostr_watch, test_relays_concurrent,
+    RelayTestResult,
+};
 use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// Get filename suffix based on relay source
+fn get_source_suffix(source: RelaySource) -> &'static str {
+    match source {
+        RelaySource::Nostrwatch => "-nostrwatch",
+        RelaySource::ConfiguredOnly => "-configured",
+        RelaySource::IndexRelays => "-index",
+    }
+}
+
+/// Apply suffix to output filename based on relay source
+fn apply_output_suffix(output: &Path, source: RelaySource) -> PathBuf {
+    let suffix = get_source_suffix(source);
+
+    let stem = output
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("relays");
+    let extension = output.extension().and_then(|e| e.to_str()).unwrap_or("json");
+
+    let new_filename = format!("{}{}.{}", stem, suffix, extension);
+    output.with_file_name(new_filename)
+}
 
 /// JSON output structure for relay discovery results
 #[derive(Serialize)]
@@ -91,6 +117,32 @@ pub async fn execute(
                 // Only use configured index relays
                 let index_relays = get_index_relays();
                 println!("  Using {} configured index relays", index_relays.len());
+                sources.push(format!("index relays ({} relays)", index_relays.len()));
+                all_relays.extend(index_relays);
+            }
+            RelaySource::IndexRelays => {
+                // Fetch NIP-66/NIP-65 relay events from index relays
+                let index_relays = get_index_relays();
+                println!(
+                    "  Querying {} index relays for NIP-66/NIP-65 events...",
+                    index_relays.len()
+                );
+
+                match discover_relays_from_index(&index_relays, Duration::from_secs(timeout_secs))
+                    .await
+                {
+                    Ok(relays) => {
+                        println!("  Discovered {} relays from NIP-66/NIP-65 events", relays.len());
+                        sources.push(format!("NIP-66/NIP-65 discovery ({} relays)", relays.len()));
+                        all_relays.extend(relays);
+                    }
+                    Err(e) => {
+                        eprintln!("  Warning: Failed to fetch relay events: {}", e);
+                    }
+                }
+
+                // Also add the index relays themselves
+                println!("  Added {} index relays", index_relays.len());
                 sources.push(format!("index relays ({} relays)", index_relays.len()));
                 all_relays.extend(index_relays);
             }
@@ -177,6 +229,7 @@ pub async fn execute(
                 relay_source: match relay_source.unwrap() {
                     RelaySource::Nostrwatch => "nostrwatch".to_string(),
                     RelaySource::ConfiguredOnly => "configured-only".to_string(),
+                    RelaySource::IndexRelays => "index-relays".to_string(),
                 },
                 chunk_size,
             },
@@ -191,19 +244,22 @@ pub async fn execute(
         failed_relays: failed,
     };
 
+    // Apply source-based suffix to output filename
+    let output_path = apply_output_suffix(&output, relay_source.unwrap());
+
     // Save to JSON file
     let json = serde_json::to_string_pretty(&output_data)?;
-    let mut file = File::create(&output)?;
+    let mut file = File::create(&output_path)?;
     file.write_all(json.as_bytes())?;
     file.write_all(b"\n")?;
     file.sync_all()?;
 
-    println!("Saved to: {}", output.display());
+    println!("Saved to: {}", output_path.display());
 
     // Suggest next step
     println!(
         "\nTo get the best relays for your config:\n  nostrsave best-relays {}",
-        output.display()
+        output_path.display()
     );
 
     Ok(())

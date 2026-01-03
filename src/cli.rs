@@ -9,6 +9,8 @@ pub enum RelaySource {
     ConfiguredOnly,
     /// Discover from nostr.watch + configured relays
     Nostrwatch,
+    /// Discover from NIP-65 relay list events on index relays
+    IndexRelays,
 }
 
 /// Minimum chunk size (1 KB)
@@ -122,7 +124,7 @@ pub enum Commands {
         #[arg(value_name = "RELAY", required_unless_present = "relay_source")]
         relay: Option<String>,
 
-        /// Relay source for discovery: "configured-only" or "nostrwatch"
+        /// Relay source for discovery: "configured-only", "nostrwatch", or "index-relays"
         #[arg(long, value_name = "SOURCE", conflicts_with = "relay")]
         relay_source: Option<RelaySource>,
 

@@ -146,11 +146,22 @@ Options:
 Discover and test Nostr relays.
 
 ```bash
-nostrsave discover-relays [OPTIONS]
+# Test a single relay (outputs JSON to stdout)
+nostrsave discover-relays wss://relay.example.com
+
+# Discover relays from various sources
+nostrsave discover-relays --relay-source <SOURCE>
+
+Sources:
+  nostrwatch       Discover from nostr.watch API + configured relays
+  configured-only  Discover from configured index relays only
+  index-relays     Discover from NIP-66/NIP-65 events on index relays
+
+No authentication required - discovery uses public APIs and anonymous queries.
+Relay testing uses a temporary keypair internally.
 
 Options:
-  -o, --output <PATH>     Output JSON file (default: relays.json)
-  --configured-only       Only test configured relays
+  -o, --output <PATH>     Output JSON file (default: relays-{source}.json)
   --timeout <SECONDS>     Connection timeout (default: 10)
   --concurrent <N>        Max concurrent tests (default: 20)
   --chunk-size <BYTES>    Payload size for round-trip test
@@ -177,8 +188,8 @@ Options:
 
 Example workflow:
 ```bash
-nostrsave discover-relays
-nostrsave best-relays -c 10
+nostrsave discover-relays --relay-source nostrwatch
+nostrsave best-relays relays-nostrwatch.json -c 10
 # Copy output to config.toml [relays] section
 ```
 
