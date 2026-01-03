@@ -258,80 +258,98 @@ pub async fn test_relays_concurrent(
     results
 }
 
-/// Discover relays from NIP-65 relay list metadata events (kind 10002)
-/// Connects to the provided relays and fetches kind 10002 events,
-/// then extracts relay URLs from the "r" tags.
-pub async fn discover_relays_from_nip65(
+/// NIP-66 Relay Discovery event kind (30166)
+fn relay_discovery_kind() -> Kind {
+    Kind::from_u16(30166)
+}
+
+/// NIP-65 Relay List Metadata event kind (10002)
+fn relay_list_kind() -> Kind {
+    Kind::from_u16(10002)
+}
+
+/// Extract relay URL from a NIP-66 relay discovery event (kind 30166)
+/// The relay URL is stored in the 'd' tag
+fn extract_relay_from_nip66(event: &Event) -> Option<String> {
+    event
+        .tags
+        .iter()
+        .find(|t| t.kind() == TagKind::d())
+        .and_then(|t| t.content())
+        .map(|s| s.to_string())
+        .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
+}
+
+/// Extract relay URLs from a NIP-65 relay list event (kind 10002)
+/// Relay URLs are stored in 'r' tags (single letter tags per NIP-65)
+fn extract_relays_from_nip65(event: &Event) -> Vec<String> {
+    event
+        .tags
+        .iter()
+        .filter(|t| {
+            // NIP-65 uses ["r", "<url>", "<marker>"] tags (single letter 'r')
+            t.single_letter_tag()
+                .map(|slt| slt.character == Alphabet::R)
+                .unwrap_or(false)
+        })
+        .filter_map(|t| t.content())
+        .map(|s| s.to_string())
+        .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
+        .collect()
+}
+
+/// Discover relays by querying seed relays for NIP-66 and NIP-65 events
+/// - NIP-66 (kind 30166): Relay discovery events published by relay monitors
+/// - NIP-65 (kind 10002): Relay list events published by users
+pub async fn discover_relays_from_index(
     index_relays: &[String],
     timeout: Duration,
 ) -> anyhow::Result<Vec<String>> {
     use std::collections::HashSet;
 
-    // Create a temporary client for querying
-    let keys = Keys::generate();
-    let client = Client::new(keys);
+    let mut discovered: HashSet<String> = HashSet::new();
 
-    // Add relays
+    // Create a temporary client for querying
+    let client = Client::default();
+
+    // Add index relays
     for relay in index_relays {
-        if let Err(e) = client.add_relay(relay).await {
-            eprintln!("  Warning: Failed to add relay {}: {}", relay, e);
-        }
+        let _ = client.add_relay(relay.to_string()).await;
     }
 
     // Connect
     client.connect().await;
     client.wait_for_connection(timeout).await;
 
-    // Verify at least one relay connected
-    let connected_count = client
-        .relays()
-        .await
-        .into_iter()
-        .filter(|(_, r)| r.is_connected())
-        .count();
+    // Query for NIP-66 relay discovery events (kind 30166)
+    // These are published by relay monitors
+    let nip66_filter = Filter::new().kind(relay_discovery_kind()).limit(100);
 
-    if connected_count == 0 {
-        client.disconnect().await;
-        return Err(anyhow::anyhow!("No index relays connected"));
-    }
+    // Query for NIP-65 relay list events (kind 10002)
+    // These are published by users listing their preferred relays
+    let nip65_filter = Filter::new().kind(relay_list_kind()).limit(100);
 
-    // Create filter for NIP-65 relay list events (kind 10002)
-    let filter = Filter::new().kind(Kind::RelayList).limit(500);
-
-    // Fetch events
-    let events = match client.fetch_events(filter, timeout).await {
-        Ok(events) => events,
-        Err(e) => {
-            client.disconnect().await;
-            return Err(anyhow::anyhow!("Failed to fetch NIP-65 events: {}", e));
-        }
-    };
-
-    client.disconnect().await;
-
-    // Extract relay URLs from "r" tags
-    let mut relays: HashSet<String> = HashSet::new();
-
-    for event in events.iter() {
-        for tag in event.tags.iter() {
-            // NIP-65 uses single-letter "r" tags: ["r", "wss://relay.url", optional "read"|"write"]
-            let is_relay_tag = tag
-                .single_letter_tag()
-                .map(|slt| slt.character == Alphabet::R)
-                .unwrap_or(false);
-
-            if is_relay_tag {
-                if let Some(relay_url) = tag.content() {
-                    // Basic validation: must start with ws:// or wss://
-                    if relay_url.starts_with("wss://") || relay_url.starts_with("ws://") {
-                        relays.insert(relay_url.to_string());
-                    }
-                }
+    // Fetch NIP-66 events
+    if let Ok(nip66_events) = client.fetch_events(nip66_filter, timeout).await {
+        for event in nip66_events.iter() {
+            if let Some(relay_url) = extract_relay_from_nip66(event) {
+                discovered.insert(relay_url);
             }
         }
     }
 
-    Ok(relays.into_iter().collect())
+    // Fetch NIP-65 events
+    if let Ok(nip65_events) = client.fetch_events(nip65_filter, timeout).await {
+        for event in nip65_events.iter() {
+            for relay_url in extract_relays_from_nip65(event) {
+                discovered.insert(relay_url);
+            }
+        }
+    }
+
+    client.disconnect().await;
+
+    Ok(discovered.into_iter().collect())
 }
 
 #[cfg(test)]

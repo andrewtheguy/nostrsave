@@ -1,7 +1,7 @@
 use crate::cli::RelaySource;
 use crate::config::get_index_relays;
 use crate::relay::{
-    discover_relays_from_nip65, discover_relays_from_nostr_watch, test_relays_concurrent,
+    discover_relays_from_index, discover_relays_from_nostr_watch, test_relays_concurrent,
     RelayTestResult,
 };
 use chrono::Utc;
@@ -121,23 +121,23 @@ pub async fn execute(
                 all_relays.extend(index_relays);
             }
             RelaySource::IndexRelays => {
-                // Fetch NIP-65 relay list events from index relays
+                // Fetch NIP-66/NIP-65 relay events from index relays
                 let index_relays = get_index_relays();
                 println!(
-                    "  Fetching NIP-65 relay lists from {} index relays...",
+                    "  Querying {} index relays for NIP-66/NIP-65 events...",
                     index_relays.len()
                 );
 
-                match discover_relays_from_nip65(&index_relays, Duration::from_secs(timeout_secs))
+                match discover_relays_from_index(&index_relays, Duration::from_secs(timeout_secs))
                     .await
                 {
                     Ok(relays) => {
-                        println!("  Discovered {} relays from NIP-65 events", relays.len());
-                        sources.push(format!("NIP-65 relay lists ({} relays)", relays.len()));
+                        println!("  Discovered {} relays from NIP-66/NIP-65 events", relays.len());
+                        sources.push(format!("NIP-66/NIP-65 discovery ({} relays)", relays.len()));
                         all_relays.extend(relays);
                     }
                     Err(e) => {
-                        eprintln!("  Warning: Failed to fetch NIP-65 events: {}", e);
+                        eprintln!("  Warning: Failed to fetch relay events: {}", e);
                     }
                 }
 
