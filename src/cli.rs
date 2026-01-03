@@ -72,9 +72,15 @@ fn parse_file_hash(s: &str) -> Result<String, String> {
     Ok(raw.to_ascii_lowercase())
 }
 
+/// Parse and validate a relay URL (wss:// or ws://)
+fn parse_relay_url(s: &str) -> Result<String, String> {
+    crate::config::validate_relay_url(s)
+        .map_err(|e| format!("Invalid relay URL: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_file_hash;
+    use super::{parse_file_hash, parse_relay_url};
 
     #[test]
     fn test_parse_file_hash_accepts_raw_hex() {
@@ -110,6 +116,48 @@ mod tests {
     fn test_parse_file_hash_rejects_non_hex() {
         let input = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
         assert!(parse_file_hash(input).is_err());
+    }
+
+    #[test]
+    fn test_parse_relay_url_accepts_wss() {
+        let input = "wss://relay.nostr.band";
+        assert_eq!(parse_relay_url(input).unwrap(), input);
+    }
+
+    #[test]
+    fn test_parse_relay_url_rejects_trailing_comma() {
+        assert!(parse_relay_url("wss://relay.nostr.band,").is_err());
+    }
+
+    #[test]
+    fn test_parse_relay_url_rejects_bad_scheme() {
+        assert!(parse_relay_url("https://relay.nostr.band").is_err());
+        assert!(parse_relay_url("ftp://relay.nostr.band").is_err());
+    }
+
+    #[test]
+    fn test_parse_relay_url_rejects_missing_host() {
+        assert!(parse_relay_url("wss://").is_err());
+    }
+
+    #[test]
+    fn test_parse_relay_url_rejects_bad_host_labels() {
+        assert!(parse_relay_url("wss://relay..nostr.band").is_err());
+        assert!(parse_relay_url("wss://-relay.nostr.band").is_err());
+        assert!(parse_relay_url("wss://relay-.nostr.band").is_err());
+        assert!(parse_relay_url("wss://relay_nostr.band").is_err());
+    }
+
+    #[test]
+    fn test_parse_relay_url_rejects_userinfo_query_fragment() {
+        assert!(parse_relay_url("wss://user:pass@relay.nostr.band").is_err());
+        assert!(parse_relay_url("wss://relay.nostr.band?x=1").is_err());
+        assert!(parse_relay_url("wss://relay.nostr.band#frag").is_err());
+    }
+
+    #[test]
+    fn test_parse_relay_url_rejects_port_zero() {
+        assert!(parse_relay_url("wss://relay.nostr.band:0").is_err());
     }
 
 }
@@ -192,7 +240,7 @@ pub enum Commands {
     /// Discover and test Nostr relays
     DiscoverRelays {
         /// Single relay URL to test (e.g., wss://relay.example.com)
-        #[arg(value_name = "RELAY", required_unless_present = "relay_source")]
+        #[arg(value_name = "RELAY", required_unless_present = "relay_source", value_parser = parse_relay_url)]
         relay: Option<String>,
 
         /// Relay source for discovery: "configured-only", "nostrwatch", or "index-relays"
