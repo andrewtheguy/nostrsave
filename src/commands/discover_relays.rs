@@ -65,7 +65,7 @@ pub async fn execute(
         all_relays.insert(relay_url.clone());
     } else {
         // Use relay_source to determine where to fetch relays from
-        let source = relay_source.expect("relay_source required when relay not provided");
+        let source = relay_source.ok_or_else(|| anyhow::anyhow!("relay_source required when relay not provided"))?;
 
         match source {
             RelaySource::Nostrwatch => {
