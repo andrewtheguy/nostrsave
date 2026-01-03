@@ -125,7 +125,8 @@ pub async fn execute(
 
     // 5. Single relay mode: print JSON to stdout and exit early
     if relay.is_some() {
-        let result = results.first().expect("should have one result");
+        let result = results.first()
+            .ok_or_else(|| anyhow::anyhow!("relay test returned no results"))?;
         let json = serde_json::to_string_pretty(result)?;
         println!("{}", json);
         return Ok(());
@@ -172,10 +173,10 @@ pub async fn execute(
             settings: DiscoverySettings {
                 timeout_secs,
                 concurrent_tests: concurrent,
-                relay_source: match relay_source {
-                    Some(RelaySource::Nostrwatch) => "nostrwatch".to_string(),
-                    Some(RelaySource::ConfiguredOnly) => "configured-only".to_string(),
-                    None => "unknown".to_string(),
+                // relay_source is guaranteed Some: single-relay mode returns early, bulk mode validates via ok_or_else
+                relay_source: match relay_source.unwrap() {
+                    RelaySource::Nostrwatch => "nostrwatch".to_string(),
+                    RelaySource::ConfiguredOnly => "configured-only".to_string(),
                 },
                 chunk_size,
             },
