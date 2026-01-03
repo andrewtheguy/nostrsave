@@ -181,6 +181,24 @@ pub async fn execute(
             .ok_or_else(|| anyhow::anyhow!("relay test returned no results"))?;
         let json = serde_json::to_string_pretty(result)?;
         println!("{}", json);
+
+        // Print human-readable status summary
+        let status = if !result.connected {
+            "\x1b[31m✗ Failed to connect\x1b[0m"
+        } else {
+            match (result.can_read, result.can_write) {
+                (true, true) => "\x1b[32m✓ Read + Write\x1b[0m",
+                (true, false) => "\x1b[33m⚠ Read only\x1b[0m",
+                (false, true) => "\x1b[33m⚠ Write only\x1b[0m",
+                (false, false) => "\x1b[31m✗ Connected but no read/write\x1b[0m",
+            }
+        };
+        println!("\nStatus: {}", status);
+
+        if let Some(ref error) = result.error {
+            println!("Error: {}", error);
+        }
+
         return Ok(());
     }
 
