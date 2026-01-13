@@ -1,5 +1,6 @@
 mod events;
 mod index;
+pub(crate) mod codec;
 
 pub use events::{
     create_chunk_event, create_chunk_filter, create_chunk_filter_for_indices,

@@ -1,4 +1,3 @@
-use base64::Engine;
 use crate::chunking::FileChunker;
 use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::crypto;
@@ -7,6 +6,7 @@ use crate::nostr::{
     create_chunk_event, create_current_index_filter, create_file_index_event, create_manifest_event,
     parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry, MAX_ENTRIES_PER_PAGE,
 };
+use crate::nostr::codec::{base85_encode_json_safe, zstd_compress};
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{error, warn};
@@ -356,11 +356,13 @@ pub async fn execute(
         if !unpublished.contains(&chunk.index) {
             continue;
         }
-        // Prepare content: encrypt or base64-encode
+        let compressed = zstd_compress(&chunk.data)?;
+        // Prepare content: always base85-encode payload for Nostr event.content
         let content = if encryption == EncryptionAlgorithm::Nip44 {
-            crypto::encrypt_chunk(&keys, &chunk.data)?
+            let encrypted = crypto::encrypt_chunk(&keys, &compressed)?;
+            base85_encode_json_safe(encrypted.as_bytes())
         } else {
-            base64::engine::general_purpose::STANDARD.encode(&chunk.data)
+            base85_encode_json_safe(&compressed)
         };
 
         let metadata = ChunkMetadata {

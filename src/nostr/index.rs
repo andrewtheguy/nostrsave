@@ -1,4 +1,5 @@
 use crate::config::{EncryptionAlgorithm, FILE_INDEX_EVENT_KIND};
+use crate::nostr::codec::{base85_decode_json_safe, base85_encode_json_safe, zstd_compress, zstd_decompress};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -19,7 +20,7 @@ fn archive_identifier(archive_number: u32) -> String {
 }
 
 /// Current file index version
-pub const CURRENT_FILE_INDEX_VERSION: u8 = 2;
+pub const CURRENT_FILE_INDEX_VERSION: u8 = 3;
 
 /// Maximum entries per index page before archiving
 pub const MAX_ENTRIES_PER_PAGE: usize = 1000;
@@ -325,7 +326,9 @@ impl Default for FileIndex {
 
 /// Create a Nostr event for the file index
 pub fn create_file_index_event(index: &FileIndex) -> anyhow::Result<EventBuilder> {
-    let content = serde_json::to_string(index)?;
+    let json = serde_json::to_vec(index)?;
+    let compressed = zstd_compress(&json)?;
+    let content = base85_encode_json_safe(&compressed);
 
     let tags = vec![
         Tag::identifier(index.get_identifier()),
@@ -387,7 +390,9 @@ pub fn parse_file_index_event(event: &Event) -> anyhow::Result<FileIndex> {
         ));
     }
 
-    let index: FileIndex = serde_json::from_str(&event.content)?;
+    let compressed = base85_decode_json_safe(&event.content)?;
+    let json = zstd_decompress(&compressed)?;
+    let index: FileIndex = serde_json::from_slice(&json)?;
 
     if index.version() != CURRENT_FILE_INDEX_VERSION {
         return Err(anyhow::anyhow!(

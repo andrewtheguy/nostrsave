@@ -1,10 +1,10 @@
-use base64::Engine;
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
 
 use crate::config::{EncryptionAlgorithm, CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
 use crate::crypto;
 use crate::manifest::Manifest;
+use crate::nostr::codec::{base85_decode_json_safe, zstd_decompress};
 
 /// Data extracted from a chunk event
 #[derive(Debug, Clone)]
@@ -27,8 +27,8 @@ pub struct ChunkMetadata<'a> {
 
 /// Create a Nostr event for a file chunk
 ///
-/// - content: pre-processed content (encrypted string or base64-encoded)
-/// - metadata: chunk metadata including encrypted flag
+/// - content: pre-processed content (base85-wrapped NIP-44 string, or base85+zstd payload)
+/// - metadata: chunk metadata including encryption mode
 pub fn create_chunk_event(metadata: &ChunkMetadata, content: &str) -> anyhow::Result<EventBuilder> {
     // Validate inputs
     if metadata.chunk_index >= metadata.total_chunks {
@@ -207,11 +207,15 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
             let keys = keys.ok_or_else(|| {
                 anyhow::anyhow!("Chunk is encrypted but no keys provided for decryption")
             })?;
-            crypto::decrypt_chunk(keys, &event.content)?
+            let encrypted_bytes = base85_decode_json_safe(&event.content)?;
+            let encrypted = String::from_utf8(encrypted_bytes)
+                .map_err(|e| anyhow::anyhow!("Invalid encrypted payload encoding: {}", e))?;
+            let compressed = crypto::decrypt_chunk(keys, &encrypted)?;
+            zstd_decompress(&compressed)?
         }
         EncryptionAlgorithm::None => {
-            // Plain base64 decode
-            base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?
+            let compressed = base85_decode_json_safe(&event.content)?;
+            zstd_decompress(&compressed)?
         }
     };
 

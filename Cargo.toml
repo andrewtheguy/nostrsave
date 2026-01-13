@@ -22,8 +22,9 @@ toml = "0.8"
 sha2 = "0.10"
 hex = "0.4"
 
-# Base64 encoding for binary data
-base64 = "0.22"
+# Compression + JSON-safe base85 encoding for Nostr payloads
+zstd = "0.13"
+z85 = "3.0"
 
 # Error handling
 thiserror = "2.0"
