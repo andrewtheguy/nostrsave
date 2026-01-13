@@ -17,6 +17,8 @@ pub fn zstd_decompress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn base85_encode_json_safe(data: &[u8]) -> String {
+    // Note: despite being named Z85, the `z85` crate supports arbitrary-length input by
+    // emitting a tail chunk when `len % 4 != 0`, so callers don't need to pre-pad.
     z85::encode(data)
 }
 
