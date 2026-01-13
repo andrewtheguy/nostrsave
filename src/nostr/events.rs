@@ -1,10 +1,10 @@
-use base64::Engine;
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
 
 use crate::config::{EncryptionAlgorithm, CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
 use crate::crypto;
 use crate::manifest::Manifest;
+use crate::nostr::codec::{base85_decode_json_safe, zstd_decompress};
 
 /// Data extracted from a chunk event
 #[derive(Debug, Clone)]
@@ -27,8 +27,8 @@ pub struct ChunkMetadata<'a> {
 
 /// Create a Nostr event for a file chunk
 ///
-/// - content: pre-processed content (encrypted string or base64-encoded)
-/// - metadata: chunk metadata including encrypted flag
+/// - content: pre-processed content (base85-wrapped NIP-44 string, or base85+zstd payload)
+/// - metadata: chunk metadata including encryption mode
 pub fn create_chunk_event(metadata: &ChunkMetadata, content: &str) -> anyhow::Result<EventBuilder> {
     // Validate inputs
     if metadata.chunk_index >= metadata.total_chunks {
@@ -207,11 +207,15 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
             let keys = keys.ok_or_else(|| {
                 anyhow::anyhow!("Chunk is encrypted but no keys provided for decryption")
             })?;
-            crypto::decrypt_chunk(keys, &event.content)?
+            let encrypted_bytes = base85_decode_json_safe(&event.content)?;
+            let encrypted = String::from_utf8(encrypted_bytes)
+                .map_err(|e| anyhow::anyhow!("Invalid encrypted payload encoding: {}", e))?;
+            let compressed = crypto::decrypt_chunk(keys, &encrypted)?;
+            zstd_decompress(&compressed)?
         }
         EncryptionAlgorithm::None => {
-            // Plain base64 decode
-            base64::engine::general_purpose::STANDARD.decode(event.content.as_bytes())?
+            let compressed = base85_decode_json_safe(&event.content)?;
+            zstd_decompress(&compressed)?
         }
     };
 
@@ -260,4 +264,114 @@ pub fn parse_manifest_event(event: &Event) -> anyhow::Result<Manifest> {
     }
 
     Ok(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nostr::codec::{base85_encode_json_safe, zstd_compress};
+    use sha2::Digest;
+
+    fn assert_json_string_no_escapes(s: &str) {
+        let json = serde_json::to_string(s).unwrap();
+        assert_eq!(json, format!("\"{}\"", s));
+    }
+
+    #[tokio::test]
+    async fn test_chunk_event_roundtrip_plain_base85_zstd() {
+        let keys = Keys::generate();
+        let file_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let data: Vec<u8> = (0..10_000).map(|i| (i % 251) as u8).collect();
+        let chunk_hash = hex::encode(sha2::Sha256::digest(&data));
+
+        let compressed = zstd_compress(&data).unwrap();
+        let content = base85_encode_json_safe(&compressed);
+        assert_json_string_no_escapes(&content);
+
+        let metadata = ChunkMetadata {
+            file_hash,
+            chunk_index: 0,
+            total_chunks: 1,
+            chunk_hash: &chunk_hash,
+            chunk_data: &data,
+            filename: "test.bin",
+            encryption: EncryptionAlgorithm::None,
+        };
+
+        let event = create_chunk_event(&metadata, &content)
+            .unwrap()
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        let parsed = parse_chunk_event(&event, None).unwrap();
+        assert_eq!(0, parsed.index);
+        assert_eq!(data, parsed.data);
+    }
+
+    #[tokio::test]
+    async fn test_chunk_event_roundtrip_plain_base85_zstd_minimal() {
+        let keys = Keys::generate();
+        let file_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let data = vec![0xABu8];
+        let chunk_hash = hex::encode(sha2::Sha256::digest(&data));
+
+        let compressed = zstd_compress(&data).unwrap();
+        let content = base85_encode_json_safe(&compressed);
+        assert_json_string_no_escapes(&content);
+
+        let metadata = ChunkMetadata {
+            file_hash,
+            chunk_index: 0,
+            total_chunks: 1,
+            chunk_hash: &chunk_hash,
+            chunk_data: &data,
+            filename: "test.bin",
+            encryption: EncryptionAlgorithm::None,
+        };
+
+        let event = create_chunk_event(&metadata, &content)
+            .unwrap()
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        let parsed = parse_chunk_event(&event, None).unwrap();
+        assert_eq!(0, parsed.index);
+        assert_eq!(data, parsed.data);
+    }
+
+    #[tokio::test]
+    async fn test_chunk_event_roundtrip_nip44_base85_zstd() {
+        let keys = Keys::generate();
+        let file_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let data: Vec<u8> = (0..20_000).map(|i| (i % 256) as u8).collect();
+        let chunk_hash = hex::encode(sha2::Sha256::digest(&data));
+
+        // Upload format: zstd -> nip44 -> base85-wrap encrypted string bytes
+        let compressed = zstd_compress(&data).unwrap();
+        let encrypted = crypto::encrypt_chunk(&keys, &compressed).unwrap();
+        let content = base85_encode_json_safe(encrypted.as_bytes());
+        assert_json_string_no_escapes(&content);
+
+        let metadata = ChunkMetadata {
+            file_hash,
+            chunk_index: 0,
+            total_chunks: 1,
+            chunk_hash: &chunk_hash,
+            chunk_data: &data,
+            filename: "test.bin",
+            encryption: EncryptionAlgorithm::Nip44,
+        };
+
+        let event = create_chunk_event(&metadata, &content)
+            .unwrap()
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        let parsed = parse_chunk_event(&event, Some(&keys)).unwrap();
+        assert_eq!(0, parsed.index);
+        assert_eq!(data, parsed.data);
+    }
 }

@@ -9,11 +9,13 @@ flowchart LR
     A[Read File] --> B[Compute Session Hash<br/>SHA-512]
     B --> C[Create/Resume<br/>Upload Session]
     C --> D[Split into<br/>Chunks]
-    D --> E[Encrypt<br/>NIP-44]
-    E --> F[Publish Chunk<br/>skip if done]
-    F --> G[Publish<br/>Manifest]
-    G --> H[Update File<br/>Index]
-    H --> I[Cleanup<br/>Session]
+    D --> E[Compress<br/>Zstd]
+    E --> F[Encrypt<br/>NIP-44 (optional)]
+    F --> G[Base85 Encode<br/>JSON-safe]
+    G --> H[Publish Chunk<br/>skip if done]
+    H --> I[Publish<br/>Manifest]
+    I --> J[Update File<br/>Index]
+    J --> K[Cleanup<br/>Session]
 ```
 
 The upload session tracks which chunks have been successfully published. If interrupted, re-running the command skips already-published chunks.
@@ -24,9 +26,10 @@ The upload session tracks which chunks have been successfully published. If inte
 flowchart LR
     A[Load/Fetch<br/>Manifest] --> B[Create/Resume<br/>Download Session]
     B --> C[Query Missing<br/>Chunks from Relays]
-    C --> D[Decrypt, Verify<br/>& Store Chunks]
-    D --> E[Write File<br/>atomic]
-    E --> F[Cleanup<br/>Session]
+    C --> D[Decode Base85<br/>& Decrypt]
+    D --> E[Decompress, Verify<br/>& Store Chunks]
+    E --> F[Write File<br/>atomic]
+    F --> G[Cleanup<br/>Session]
 ```
 
 The download session stores received chunks in SQLite. If interrupted, re-running the command only fetches missing chunks. File assembly happens atomically after all chunks are collected.
@@ -60,7 +63,7 @@ Parameterized replaceable event storing one file chunk.
 
 ```
 Kind: 30078
-Content: <NIP-44 encrypted or base64-encoded chunk data>
+Content: <base85-wrapped payload>
 Tags:
   - ["d", "<file_hash>:<chunk_index>"]     # Unique identifier
   - ["x", "<file_hash>"]                   # File hash for filtering
@@ -69,6 +72,10 @@ Tags:
   - ["filename", "<name>"]                 # Original filename
   - ["size", "<bytes>"]                    # Chunk size
   - ["encryption", "nip44|none"]            # Encryption algorithm
+
+Content encoding:
+- If `encryption = nip44`: `base85( nip44_encrypt( zstd(chunk_bytes) ) )`
+- If `encryption = none`: `base85( zstd(chunk_bytes) )`
 ```
 
 ### Manifest Event (Kind 30079)
@@ -107,11 +114,11 @@ Tags:
 
 ### File Index Event (Kind 30080, paged)
 
-Parameterized replaceable events listing a user's files across pages.
+Parameterized replaceable events listing a user's files across pages. Index content is zstd-compressed and base85-encoded.
 
 ```
 Kind: 30080
-Content: <JSON file index>
+Content: <base85( zstd(JSON file index) )>
 Tags:
   - ["d", "nostrsave-index"]               # Current index (page 1)
   - ["d", "nostrsave-index-archive-<n>"]   # Archive pages (n >= 1)
@@ -120,7 +127,7 @@ Tags:
 **Index JSON:**
 ```json
 {
-  "version": 2,
+  "version": 3,
   "entries": [
     {
       "file_hash": "abc123...",
@@ -139,7 +146,7 @@ Tags:
 **Notes:**
 - `archive_number` is `0` for the current index (page 1). Archives start at `1`.
 - `total_archives` is the total number of archive pages (not counting the current index).
-- No backward compatibility: only version `2` indexes are supported.
+- No backward compatibility: only version `3` indexes are supported.
 
 ## Configuration Loading
 
@@ -156,7 +163,10 @@ flowchart TB
 - **Maximum:** 65408 bytes (tested limit for reliable relay storage)
 - **Range:** 1 KB to 65408 bytes (tested max)
 - **Hash algorithm:** SHA-256 (computed on original, unencrypted data)
-- **Encryption:** NIP-44 (default) or none; unencrypted data is base64-encoded
+- **Compression:** Zstd (per-chunk, before optional encryption)
+- **Encoding:** Base85 (Z85) JSON-safe payload wrapping
+- **Encryption:** NIP-44 (default) or none
+- **Decompression safety:** Decompressed payloads are capped at 10 MiB to prevent memory exhaustion
 
 ### Why Chunking?
 

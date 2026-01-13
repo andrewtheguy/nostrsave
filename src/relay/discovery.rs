@@ -1,6 +1,7 @@
 use crate::config::EncryptionAlgorithm;
 use crate::crypto;
 use crate::nostr::{create_chunk_event, create_chunk_filter, ChunkMetadata};
+use crate::nostr::codec::{zstd_compress_with_level, zstd_decompress};
 use futures::stream::{self, StreamExt};
 use log::warn;
 use nostr_sdk::prelude::*;
@@ -112,8 +113,22 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     rand::thread_rng().fill(&mut test_data[..]);
     let test_hash = hex::encode(Sha256::digest(&test_data));
 
+    let compressed = match zstd_compress_with_level(&test_data, 0) {
+        Ok(data) => data,
+        Err(e) => {
+            client.disconnect().await;
+            return RelayTestResult {
+                connected: true,
+                latency_ms: Some(connect_latency),
+                payload_size: chunk_size,
+                error: Some(format!("zstd compression failed: {}", e)),
+                ..base_result
+            };
+        }
+    };
+
     // Encrypt test data using NIP-44 (same as actual upload)
-    let encrypted_content = match crypto::encrypt_chunk(&keys, &test_data) {
+    let encrypted_content = match crypto::encrypt_chunk(&keys, &compressed) {
         Ok(content) => content,
         Err(e) => {
             client.disconnect().await;
@@ -139,7 +154,8 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
         filename: &filename,
         encryption: EncryptionAlgorithm::Nip44,
     };
-    let builder = match create_chunk_event(&metadata, &encrypted_content) {
+    let encoded_content = crate::nostr::codec::base85_encode_json_safe(encrypted_content.as_bytes());
+    let builder = match create_chunk_event(&metadata, &encoded_content) {
         Ok(builder) => builder,
         Err(e) => {
             client.disconnect().await;
@@ -194,15 +210,20 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
         Ok(events) => {
             if let Some(event) = events.iter().next() {
                 // Decrypt and verify the content matches original data
-                match crypto::decrypt_chunk(&keys, &event.content) {
-                    Ok(decrypted) => {
-                        if decrypted == test_data {
-                            (true, None)
-                        } else {
-                            (false, Some("Content mismatch after decryption".to_string()))
-                        }
-                    }
-                    Err(e) => (false, Some(format!("Decryption failed: {}", e))),
+                let verify = || -> Result<Vec<u8>, String> {
+                    let encrypted_bytes = crate::nostr::codec::base85_decode_json_safe(&event.content)
+                        .map_err(|e| format!("Base85 decode failed: {}", e))?;
+                    let encrypted = String::from_utf8(encrypted_bytes)
+                        .map_err(|e| format!("Invalid payload encoding: {}", e))?;
+                    let decrypted = crypto::decrypt_chunk(&keys, &encrypted)
+                        .map_err(|e| format!("Decryption failed: {}", e))?;
+                    zstd_decompress(&decrypted)
+                        .map_err(|e| format!("Decompression failed: {}", e))
+                };
+                match verify() {
+                    Ok(plaintext) if plaintext == test_data => (true, None),
+                    Ok(_) => (false, Some("Content mismatch after decompression".to_string())),
+                    Err(e) => (false, Some(e)),
                 }
             } else {
                 (false, Some("Event not found on read".to_string()))

@@ -1,4 +1,3 @@
-use base64::Engine;
 use crate::chunking::FileChunker;
 use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::crypto;
@@ -7,8 +6,9 @@ use crate::nostr::{
     create_chunk_event, create_current_index_filter, create_file_index_event, create_manifest_event,
     parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry, MAX_ENTRIES_PER_PAGE,
 };
+use crate::nostr::codec::{base85_encode_json_safe, zstd_compress};
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{HumanBytes, ProgressBar, ProgressStyle};
 use log::{error, warn};
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
@@ -22,6 +22,16 @@ const MAX_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY_MS: u64 = 500;
 /// Maximum delay cap for retries
 const MAX_RETRY_DELAY_MS: u64 = 5000;
+
+fn calculate_retry_delay(attempt: u32) -> u64 {
+    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+    let jitter = (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        % 200) as u64;
+    (base_delay + jitter).min(MAX_RETRY_DELAY_MS)
+}
 
 /// Maximum number of retry attempts for opening session database
 const SESSION_OPEN_RETRIES: u32 = 3;
@@ -351,17 +361,29 @@ pub async fn execute(
     // Set progress to already published count
     pb.set_position(already_published as u64);
 
+    let mut uploaded_raw_bytes: u64 = 0;
+    let mut uploaded_zstd_bytes: u64 = 0;
+    let mut uploaded_content_bytes: u64 = 0;
+    let mut uploaded_chunks: usize = 0;
+
     for chunk in &chunks {
         // Skip already published chunks
         if !unpublished.contains(&chunk.index) {
             continue;
         }
-        // Prepare content: encrypt or base64-encode
+        let compressed = zstd_compress(&chunk.data)?;
+        // Prepare content: always base85-encode payload for Nostr event.content
         let content = if encryption == EncryptionAlgorithm::Nip44 {
-            crypto::encrypt_chunk(&keys, &chunk.data)?
+            let encrypted = crypto::encrypt_chunk(&keys, &compressed)?;
+            base85_encode_json_safe(encrypted.as_bytes())
         } else {
-            base64::engine::general_purpose::STANDARD.encode(&chunk.data)
+            base85_encode_json_safe(&compressed)
         };
+
+        uploaded_raw_bytes += chunk.data.len() as u64;
+        uploaded_zstd_bytes += compressed.len() as u64;
+        uploaded_content_bytes += content.len() as u64;
+        uploaded_chunks += 1;
 
         let metadata = ChunkMetadata {
             file_hash: &file_hash,
@@ -392,14 +414,7 @@ pub async fn execute(
                 Err(e) => {
                     last_error = Some(e);
                     if attempt < MAX_RETRIES {
-                        // Calculate delay with exponential backoff and jitter
-                        let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                        let jitter = (SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .subsec_nanos()
-                            % 200) as u64;
-                        let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+                        let delay = calculate_retry_delay(attempt);
 
                         if verbose {
                             pb.suspend(|| {
@@ -488,6 +503,17 @@ pub async fn execute(
     println!("Chunks:     {}", manifest.total_chunks);
     println!("Hash:       {}", file_hash);
     println!("Manifest:   {}", manifest_event_id);
+    if uploaded_chunks > 0 {
+        println!("\n=== Payload (this run) ===");
+        println!("Chunks:     {}", uploaded_chunks);
+        println!("Raw:        {}", HumanBytes(uploaded_raw_bytes));
+        if uploaded_raw_bytes > 0 {
+            let zstd_pct = (uploaded_zstd_bytes as f64 / uploaded_raw_bytes as f64) * 100.0;
+            let content_pct = (uploaded_content_bytes as f64 / uploaded_raw_bytes as f64) * 100.0;
+            println!("Zstd:       {} ({zstd_pct:.1}% of raw)", HumanBytes(uploaded_zstd_bytes));
+            println!("Content:    {} ({content_pct:.1}% of raw)", HumanBytes(uploaded_content_bytes));
+        }
+    }
     if let Some(manifest_path) = &output {
         println!("Local copy: {}", manifest_path.display());
     }
@@ -702,14 +728,7 @@ async fn publish_file_index_to_relays(
             Err(e) => {
                 archive_last_error = Some(e);
                 if attempt < MAX_RETRIES {
-                    // Calculate delay with exponential backoff and jitter
-                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                    let jitter = (SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .subsec_nanos()
-                        % 200) as u64;
-                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+                    let delay = calculate_retry_delay(attempt);
 
                     if verbose {
                         warn!(
@@ -755,14 +774,7 @@ async fn publish_file_index_to_relays(
             Err(e) => {
                 last_error = Some(e);
                 if attempt < MAX_RETRIES {
-                    // Calculate delay with exponential backoff and jitter
-                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                    let jitter = (SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .subsec_nanos()
-                        % 200) as u64;
-                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+                    let delay = calculate_retry_delay(attempt);
 
                     if verbose {
                         warn!(
