@@ -23,6 +23,16 @@ const BASE_RETRY_DELAY_MS: u64 = 500;
 /// Maximum delay cap for retries
 const MAX_RETRY_DELAY_MS: u64 = 5000;
 
+fn calculate_retry_delay(attempt: u32) -> u64 {
+    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
+    let jitter = (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        % 200) as u64;
+    (base_delay + jitter).min(MAX_RETRY_DELAY_MS)
+}
+
 /// Maximum number of retry attempts for opening session database
 const SESSION_OPEN_RETRIES: u32 = 3;
 /// Delay between session open retries in milliseconds
@@ -404,14 +414,7 @@ pub async fn execute(
                 Err(e) => {
                     last_error = Some(e);
                     if attempt < MAX_RETRIES {
-                        // Calculate delay with exponential backoff and jitter
-                        let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                        let jitter = (SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .subsec_nanos()
-                            % 200) as u64;
-                        let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+                        let delay = calculate_retry_delay(attempt);
 
                         if verbose {
                             pb.suspend(|| {
@@ -501,7 +504,7 @@ pub async fn execute(
     println!("Hash:       {}", file_hash);
     println!("Manifest:   {}", manifest_event_id);
     if uploaded_chunks > 0 {
-        println!("\nPayload (this run) ===");
+        println!("\n=== Payload (this run) ===");
         println!("Chunks:     {}", uploaded_chunks);
         println!("Raw:        {}", HumanBytes(uploaded_raw_bytes));
         if uploaded_raw_bytes > 0 {
@@ -725,14 +728,7 @@ async fn publish_file_index_to_relays(
             Err(e) => {
                 archive_last_error = Some(e);
                 if attempt < MAX_RETRIES {
-                    // Calculate delay with exponential backoff and jitter
-                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                    let jitter = (SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .subsec_nanos()
-                        % 200) as u64;
-                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+                    let delay = calculate_retry_delay(attempt);
 
                     if verbose {
                         warn!(
@@ -778,14 +774,7 @@ async fn publish_file_index_to_relays(
             Err(e) => {
                 last_error = Some(e);
                 if attempt < MAX_RETRIES {
-                    // Calculate delay with exponential backoff and jitter
-                    let base_delay = BASE_RETRY_DELAY_MS * 2u64.pow(attempt);
-                    let jitter = (SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .subsec_nanos()
-                        % 200) as u64;
-                    let delay = (base_delay + jitter).min(MAX_RETRY_DELAY_MS);
+                    let delay = calculate_retry_delay(attempt);
 
                     if verbose {
                         warn!(

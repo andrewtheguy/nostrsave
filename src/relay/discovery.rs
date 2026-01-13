@@ -210,27 +210,20 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
         Ok(events) => {
             if let Some(event) = events.iter().next() {
                 // Decrypt and verify the content matches original data
-                match crate::nostr::codec::base85_decode_json_safe(&event.content) {
-                    Ok(encrypted_bytes) => match String::from_utf8(encrypted_bytes) {
-                        Ok(encrypted) => match crypto::decrypt_chunk(&keys, &encrypted) {
-                            Ok(decrypted) => match zstd_decompress(&decrypted) {
-                                Ok(plaintext) => {
-                                    if plaintext == test_data {
-                                        (true, None)
-                                    } else {
-                                        (
-                                            false,
-                                            Some("Content mismatch after decompression".to_string()),
-                                        )
-                                    }
-                                }
-                                Err(e) => (false, Some(format!("Decompression failed: {}", e))),
-                            },
-                            Err(e) => (false, Some(format!("Decryption failed: {}", e))),
-                        },
-                        Err(e) => (false, Some(format!("Invalid payload encoding: {}", e))),
-                    },
-                    Err(e) => (false, Some(format!("Base85 decode failed: {}", e))),
+                let verify = || -> Result<Vec<u8>, String> {
+                    let encrypted_bytes = crate::nostr::codec::base85_decode_json_safe(&event.content)
+                        .map_err(|e| format!("Base85 decode failed: {}", e))?;
+                    let encrypted = String::from_utf8(encrypted_bytes)
+                        .map_err(|e| format!("Invalid payload encoding: {}", e))?;
+                    let decrypted = crypto::decrypt_chunk(&keys, &encrypted)
+                        .map_err(|e| format!("Decryption failed: {}", e))?;
+                    zstd_decompress(&decrypted)
+                        .map_err(|e| format!("Decompression failed: {}", e))
+                };
+                match verify() {
+                    Ok(plaintext) if plaintext == test_data => (true, None),
+                    Ok(_) => (false, Some("Content mismatch after decompression".to_string())),
+                    Err(e) => (false, Some(e)),
                 }
             } else {
                 (false, Some("Event not found on read".to_string()))
