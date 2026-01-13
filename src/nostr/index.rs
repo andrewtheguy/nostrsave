@@ -420,6 +420,11 @@ pub fn parse_file_index_event(event: &Event) -> anyhow::Result<FileIndex> {
 mod tests {
     use super::*;
 
+    fn assert_json_string_no_escapes(s: &str) {
+        let json = serde_json::to_string(s).unwrap();
+        assert_eq!(json, format!("\"{}\"", s));
+    }
+
     // Valid SHA-256 hash for testing (64 hex chars)
     const TEST_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -732,5 +737,57 @@ mod tests {
 
         assert_eq!(index.len(), 1);
         assert_eq!(index.entries()[0].file_name(), "test_updated.txt");
+    }
+
+    #[tokio::test]
+    async fn test_file_index_event_roundtrip_base85_zstd() {
+        let keys = Keys::generate();
+
+        let mut index = FileIndex::new();
+        index.add_entry(
+            FileIndexEntry::new(
+                TEST_HASH.to_string(),
+                "a.bin".to_string(),
+                123,
+                1_700_000_000,
+                EncryptionAlgorithm::None,
+            )
+            .unwrap(),
+        );
+        index.add_entry(
+            FileIndexEntry::new(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+                "b.bin".to_string(),
+                456,
+                1_700_000_001,
+                EncryptionAlgorithm::Nip44,
+            )
+            .unwrap(),
+        );
+
+        let event = create_file_index_event(&index)
+            .unwrap()
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        assert_json_string_no_escapes(&event.content);
+
+        let parsed = parse_file_index_event(&event).unwrap();
+        assert_eq!(CURRENT_FILE_INDEX_VERSION, parsed.version());
+        assert_eq!(index.get_identifier(), parsed.get_identifier());
+        assert_eq!(index.total_archives(), parsed.total_archives());
+        assert_eq!(index.len(), parsed.len());
+
+        let left = index.entries();
+        let right = parsed.entries();
+        assert_eq!(left.len(), right.len());
+        for (a, b) in left.iter().zip(right.iter()) {
+            assert_eq!(a.file_hash(), b.file_hash());
+            assert_eq!(a.file_name(), b.file_name());
+            assert_eq!(a.file_size(), b.file_size());
+            assert_eq!(a.uploaded_at(), b.uploaded_at());
+            assert_eq!(a.encryption(), b.encryption());
+        }
     }
 }
