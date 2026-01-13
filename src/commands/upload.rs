@@ -8,7 +8,7 @@ use crate::nostr::{
 };
 use crate::nostr::codec::{base85_encode_json_safe, zstd_compress};
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{HumanBytes, ProgressBar, ProgressStyle};
 use log::{error, warn};
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
@@ -351,6 +351,11 @@ pub async fn execute(
     // Set progress to already published count
     pb.set_position(already_published as u64);
 
+    let mut uploaded_raw_bytes: u64 = 0;
+    let mut uploaded_zstd_bytes: u64 = 0;
+    let mut uploaded_content_bytes: u64 = 0;
+    let mut uploaded_chunks: usize = 0;
+
     for chunk in &chunks {
         // Skip already published chunks
         if !unpublished.contains(&chunk.index) {
@@ -364,6 +369,11 @@ pub async fn execute(
         } else {
             base85_encode_json_safe(&compressed)
         };
+
+        uploaded_raw_bytes += chunk.data.len() as u64;
+        uploaded_zstd_bytes += compressed.len() as u64;
+        uploaded_content_bytes += content.len() as u64;
+        uploaded_chunks += 1;
 
         let metadata = ChunkMetadata {
             file_hash: &file_hash,
@@ -490,6 +500,17 @@ pub async fn execute(
     println!("Chunks:     {}", manifest.total_chunks);
     println!("Hash:       {}", file_hash);
     println!("Manifest:   {}", manifest_event_id);
+    if uploaded_chunks > 0 {
+        println!("\nPayload (this run) ===");
+        println!("Chunks:     {}", uploaded_chunks);
+        println!("Raw:        {}", HumanBytes(uploaded_raw_bytes));
+        if uploaded_raw_bytes > 0 {
+            let zstd_pct = (uploaded_zstd_bytes as f64 / uploaded_raw_bytes as f64) * 100.0;
+            let content_pct = (uploaded_content_bytes as f64 / uploaded_raw_bytes as f64) * 100.0;
+            println!("Zstd:       {} ({zstd_pct:.1}% of raw)", HumanBytes(uploaded_zstd_bytes));
+            println!("Content:    {} ({content_pct:.1}% of raw)", HumanBytes(uploaded_content_bytes));
+        }
+    }
     if let Some(manifest_path) = &output {
         println!("Local copy: {}", manifest_path.display());
     }
