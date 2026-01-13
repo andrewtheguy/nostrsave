@@ -16,7 +16,10 @@ pub fn zstd_decompress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut decoder = zstd::stream::Decoder::new(Cursor::new(data))
         .map_err(|e| anyhow::anyhow!("zstd decoder init failed: {}", e))?;
 
-    let mut output = Vec::new();
+    let estimated = (data.len() as u64).saturating_mul(4);
+    let min_cap = 4 * 1024u64;
+    let cap = estimated.clamp(min_cap, MAX_DECOMPRESSED_SIZE) as usize;
+    let mut output = Vec::with_capacity(cap);
     decoder
         .by_ref()
         .take(MAX_DECOMPRESSED_SIZE + 1)
@@ -85,5 +88,13 @@ mod tests {
         let compressed = zstd_compress_with_level(&data, 1).unwrap();
         let err = zstd_decompress(&compressed).unwrap_err();
         assert!(err.to_string().contains("exceeds size limit"));
+    }
+
+    #[test]
+    fn test_zstd_decompress_at_exact_limit() {
+        let data = vec![0u8; MAX_DECOMPRESSED_SIZE as usize];
+        let compressed = zstd_compress_with_level(&data, 1).unwrap();
+        let decompressed = zstd_decompress(&compressed).unwrap();
+        assert_eq!(data.len(), decompressed.len());
     }
 }
