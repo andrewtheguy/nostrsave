@@ -1,9 +1,13 @@
 use std::io::Cursor;
 
-const ZSTD_COMPRESSION_LEVEL: i32 = 5;
+const ZSTD_COMPRESSION_LEVEL: i32 = 9;
 
 pub fn zstd_compress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
-    zstd::stream::encode_all(Cursor::new(data), ZSTD_COMPRESSION_LEVEL)
+    zstd_compress_with_level(data, ZSTD_COMPRESSION_LEVEL)
+}
+
+pub fn zstd_compress_with_level(data: &[u8], level: i32) -> anyhow::Result<Vec<u8>> {
+    zstd::stream::encode_all(Cursor::new(data), level)
         .map_err(|e| anyhow::anyhow!("zstd compression failed: {}", e))
 }
 

@@ -1,7 +1,7 @@
 use crate::config::EncryptionAlgorithm;
 use crate::crypto;
 use crate::nostr::{create_chunk_event, create_chunk_filter, ChunkMetadata};
-use crate::nostr::codec::{zstd_compress, zstd_decompress};
+use crate::nostr::codec::{zstd_compress_with_level, zstd_decompress};
 use futures::stream::{self, StreamExt};
 use log::warn;
 use nostr_sdk::prelude::*;
@@ -113,7 +113,7 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     rand::thread_rng().fill(&mut test_data[..]);
     let test_hash = hex::encode(Sha256::digest(&test_data));
 
-    let compressed = match zstd_compress(&test_data) {
+    let compressed = match zstd_compress_with_level(&test_data, 0) {
         Ok(data) => data,
         Err(e) => {
             client.disconnect().await;
