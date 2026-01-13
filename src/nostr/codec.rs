@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-const ZSTD_COMPRESSION_LEVEL: i32 = 3;
+const ZSTD_COMPRESSION_LEVEL: i32 = 5;
 
 pub fn zstd_compress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     zstd::stream::encode_all(Cursor::new(data), ZSTD_COMPRESSION_LEVEL)
@@ -20,4 +20,3 @@ pub fn base85_decode_json_safe(s: &str) -> anyhow::Result<Vec<u8>> {
     z85::decode(s)
         .map_err(|e| anyhow::anyhow!("base85 decode failed: {}", e))
 }
-
