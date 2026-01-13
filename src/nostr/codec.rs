@@ -1,6 +1,7 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 const ZSTD_COMPRESSION_LEVEL: i32 = 9;
+const MAX_DECOMPRESSED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 
 pub fn zstd_compress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     zstd_compress_with_level(data, ZSTD_COMPRESSION_LEVEL)
@@ -12,8 +13,24 @@ pub fn zstd_compress_with_level(data: &[u8], level: i32) -> anyhow::Result<Vec<u
 }
 
 pub fn zstd_decompress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
-    zstd::stream::decode_all(Cursor::new(data))
-        .map_err(|e| anyhow::anyhow!("zstd decompression failed: {}", e))
+    let mut decoder = zstd::stream::Decoder::new(Cursor::new(data))
+        .map_err(|e| anyhow::anyhow!("zstd decoder init failed: {}", e))?;
+
+    let mut output = Vec::new();
+    decoder
+        .by_ref()
+        .take(MAX_DECOMPRESSED_SIZE + 1)
+        .read_to_end(&mut output)
+        .map_err(|e| anyhow::anyhow!("zstd decompression failed: {}", e))?;
+
+    if output.len() as u64 > MAX_DECOMPRESSED_SIZE {
+        return Err(anyhow::anyhow!(
+            "decompressed data exceeds size limit ({} bytes)",
+            MAX_DECOMPRESSED_SIZE
+        ));
+    }
+
+    Ok(output)
 }
 
 pub fn base85_encode_json_safe(data: &[u8]) -> String {
@@ -60,5 +77,13 @@ mod tests {
         let decoded = base85_decode_json_safe(&encoded).unwrap();
         let decompressed = zstd_decompress(&decoded).unwrap();
         assert_eq!(data.to_vec(), decompressed);
+    }
+
+    #[test]
+    fn test_zstd_decompress_enforces_size_limit() {
+        let data = vec![0u8; (MAX_DECOMPRESSED_SIZE as usize) + 1];
+        let compressed = zstd_compress_with_level(&data, 1).unwrap();
+        let err = zstd_decompress(&compressed).unwrap_err();
+        assert!(err.to_string().contains("exceeds size limit"));
     }
 }
