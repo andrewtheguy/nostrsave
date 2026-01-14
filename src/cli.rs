@@ -205,7 +205,7 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Encryption algorithm: nip44 (default) or none
+        /// Encryption algorithm: aes256gcm (default), nip44, or none
         #[arg(short, long, value_parser = parse_encryption)]
         encryption: Option<EncryptionAlgorithm>,
 

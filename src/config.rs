@@ -12,17 +12,17 @@ use url::{Host, Url};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EncryptionAlgorithm {
-    Nip44,
     #[default]
     Aes256Gcm,
+    Nip44,
     None,
 }
 
 impl std::fmt::Display for EncryptionAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EncryptionAlgorithm::Nip44 => write!(f, "nip44"),
             EncryptionAlgorithm::Aes256Gcm => write!(f, "aes256gcm"),
+            EncryptionAlgorithm::Nip44 => write!(f, "nip44"),
             EncryptionAlgorithm::None => write!(f, "none"),
         }
     }
@@ -33,10 +33,10 @@ impl std::str::FromStr for EncryptionAlgorithm {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "nip44" => Ok(EncryptionAlgorithm::Nip44),
             "aes256gcm" => Ok(EncryptionAlgorithm::Aes256Gcm),
+            "nip44" => Ok(EncryptionAlgorithm::Nip44),
             "none" => Ok(EncryptionAlgorithm::None),
-            _ => Err(format!("Invalid encryption algorithm: '{}'. Use 'nip44', 'aes256gcm' or 'none'", s)),
+            _ => Err(format!("Invalid encryption algorithm: '{}'. Use 'aes256gcm', 'nip44', or 'none'", s)),
         }
     }
 }
@@ -373,7 +373,7 @@ pub fn get_index_relays() -> anyhow::Result<Vec<String>> {
 // Encryption Resolution
 // ============================================================================
 
-/// Get encryption algorithm from config, or return default (Nip44)
+/// Get encryption algorithm from config, or return default (Aes256Gcm)
 pub fn get_encryption_algorithm() -> EncryptionAlgorithm {
     if let Some(config) = load_config() {
         if let Some(encryption) = config.encryption {
