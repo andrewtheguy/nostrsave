@@ -221,7 +221,7 @@ pub async fn execute(
     println!("Encryption:  {}", manifest.encryption);
 
     // 2. Setup decryption keys if file is encrypted
-    let decrypt_keys = if manifest.encryption == EncryptionAlgorithm::Nip44 {
+    let decrypt_keys = if manifest.encryption == EncryptionAlgorithm::Nip44 || manifest.encryption == EncryptionAlgorithm::Aes256Gcm {
         let private_key = get_private_key(key_file)?;
         let keys = Keys::parse(&private_key)?;
 

@@ -373,11 +373,17 @@ pub async fn execute(
         }
         let compressed = zstd_compress(&chunk.data)?;
         // Prepare content: always base85-encode payload for Nostr event.content
-        let content = if encryption == EncryptionAlgorithm::Nip44 {
-            let encrypted = crypto::encrypt_chunk(&keys, &compressed)?;
-            base85_encode_json_safe(encrypted.as_bytes())
-        } else {
-            base85_encode_json_safe(&compressed)
+        // Prepare content: always base85-encode payload for Nostr event.content
+        let content = match encryption {
+            EncryptionAlgorithm::Nip44 => {
+                let encrypted = crypto::encrypt_chunk(&keys, &compressed)?;
+                base85_encode_json_safe(encrypted.as_bytes())
+            }
+            EncryptionAlgorithm::Aes256Gcm => {
+                let encrypted = crypto::encrypt_aes256_gcm(keys.secret_key(), &compressed)?;
+                base85_encode_json_safe(&encrypted)
+            }
+            EncryptionAlgorithm::None => base85_encode_json_safe(&compressed),
         };
 
         uploaded_raw_bytes += chunk.data.len() as u64;

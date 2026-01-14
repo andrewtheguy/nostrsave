@@ -14,6 +14,7 @@ use url::{Host, Url};
 pub enum EncryptionAlgorithm {
     #[default]
     Nip44,
+    Aes256Gcm,
     None,
 }
 
@@ -21,6 +22,7 @@ impl std::fmt::Display for EncryptionAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EncryptionAlgorithm::Nip44 => write!(f, "nip44"),
+            EncryptionAlgorithm::Aes256Gcm => write!(f, "aes256gcm"),
             EncryptionAlgorithm::None => write!(f, "none"),
         }
     }
@@ -32,8 +34,9 @@ impl std::str::FromStr for EncryptionAlgorithm {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "nip44" => Ok(EncryptionAlgorithm::Nip44),
+            "aes256gcm" => Ok(EncryptionAlgorithm::Aes256Gcm),
             "none" => Ok(EncryptionAlgorithm::None),
-            _ => Err(format!("Invalid encryption algorithm: '{}'. Use 'nip44' or 'none'", s)),
+            _ => Err(format!("Invalid encryption algorithm: '{}'. Use 'nip44', 'aes256gcm' or 'none'", s)),
         }
     }
 }

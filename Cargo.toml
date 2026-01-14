@@ -21,6 +21,8 @@ toml = "0.8"
 # Hashing
 sha2 = "0.10"
 hex = "0.4"
+aes-gcm = "0.10"
+hkdf = "0.12"
 
 # Compression + JSON-safe base85 encoding for Nostr payloads
 zstd = "0.13"
