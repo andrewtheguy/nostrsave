@@ -10,7 +10,7 @@ flowchart LR
     B --> C[Create/Resume<br/>Upload Session]
     C --> D[Split into<br/>Chunks]
     D --> E[Compress<br/>Zstd]
-    E --> F[Encrypt<br/>NIP-44 (optional)]
+    E --> F[Encrypt<br/>AES-256-GCM (default)<br/>or NIP-44]
     F --> G[Base85 Encode<br/>JSON-safe]
     G --> H[Publish Chunk<br/>skip if done]
     H --> I[Publish<br/>Manifest]
@@ -74,8 +74,10 @@ Tags:
   - ["encryption", "nip44|none"]            # Encryption algorithm
 
 Content encoding:
+- If `encryption = aes256gcm`: `base85( aes256gcm_encrypt( zstd(chunk_bytes) ) )`
 - If `encryption = nip44`: `base85( nip44_encrypt( zstd(chunk_bytes) ) )`
 - If `encryption = none`: `base85( zstd(chunk_bytes) )`
+- Note: zstd checksums are disabled to save space.
 ```
 
 ### Manifest Event (Kind 30079)
@@ -103,7 +105,7 @@ Tags:
   "total_chunks": 19,
   "created_at": 1704067200,
   "pubkey": "npub1...",
-  "encryption": "nip44",
+  "encryption": "aes256gcm",
   "chunks": [
     {"index": 0, "event_id": "note1...", "hash": "def123..."},
     ...
@@ -134,7 +136,7 @@ Tags:
       "file_name": "photo.jpg",
       "file_size": 1234567,
       "uploaded_at": 1704067200,
-      "encryption": "nip44"
+      "encryption": "aes256gcm"
     },
     ...
   ],
@@ -154,7 +156,7 @@ Tags:
 flowchart TB
     A["1. CLI flags<br/>(--key-file, --encryption)"] --> B
     B["2. TOML config<br/>(~/.config/nostrsave/config.toml)<br/>[identity] [data_relays] [index_relays] [encryption]"] --> C
-    C["3. Built-in defaults<br/>(nip44, fallback relays)"]
+    C["3. Built-in defaults<br/>(aes256gcm, fallback relays)"]
 ```
 
 ## Chunking Strategy
@@ -163,9 +165,9 @@ flowchart TB
 - **Maximum:** 65408 bytes (tested limit for reliable relay storage)
 - **Range:** 1 KB to 65408 bytes (tested max)
 - **Hash algorithm:** SHA-256 (computed on original, unencrypted data)
-- **Compression:** Zstd (per-chunk, before optional encryption)
+- **Compression:** Zstd (per-chunk, before optional encryption). Checksums disabled.
 - **Encoding:** Base85 (Z85) JSON-safe payload wrapping
-- **Encryption:** NIP-44 (default) or none
+- **Encryption:** AES-256-GCM (default), NIP-44, or none
 - **Decompression safety:** Decompressed payloads are capped at 10 MiB to prevent memory exhaustion
 
 ### Why Chunking?
@@ -176,9 +178,15 @@ flowchart TB
 4. **Deduplication:** Identical chunks share the same hash
 5. **Streaming-friendly:** Chunks are processed as events arrive per relay (sequential across relays)
 
-## Encryption (NIP-44)
+## Encryption
+- **AES-256-GCM (Default):**
+  - **Key Derivation:** HKDF-SHA256 derived from the Nostr secret key.
+  - **Structure:** `[nonce (12B)][ciphertext][tag (16B)]`
+  - **Integrity:** Authenticated encryption ensures data integrity.
 
-Files are encrypted by default using NIP-44 self-encryption:
+- **NIP-44 (Optional):**
+  - **Self-encryption:** Encrypted to own public key.
+  - **Structure:** Standard NIP-44 format (ChaCha20-Poly1305 + HMAC-SHA256 for v2).
 
 1. **Self-encryption:** Chunks are encrypted using your secret key + your public key
 2. **Only you can decrypt:** Only the owner (matching private key) can decrypt the file
@@ -382,6 +390,8 @@ flowchart TB
 | Crate | Purpose |
 |-------|---------|
 | nostr-sdk | Nostr protocol implementation (with nip44 feature) |
+| aes-gcm | AES-256-GCM encryption |
+| hkdf | HMAC-based Key Derivation Function |
 | clap | CLI argument parsing |
 | tokio | Async runtime |
 | serde/serde_json | JSON serialization |
