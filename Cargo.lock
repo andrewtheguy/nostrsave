@@ -1414,6 +1414,7 @@ dependencies = [
  "toml",
  "url",
  "z85",
+ "zeroize",
  "zstd",
 ]
 

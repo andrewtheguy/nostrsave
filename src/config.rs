@@ -424,10 +424,10 @@ mod tests {
         assert!(!relays.is_empty());
         assert!(relays.iter().all(|r| r.starts_with("wss://")));
     }
-}
 
-#[test]
-fn test_validate_relay_url_normalization_extra() {
-    assert_eq!(validate_relay_url("wss://relay.damus.io/").unwrap(), "wss://relay.damus.io");
-    assert_eq!(validate_relay_url("wss://nos.lol/").unwrap(), "wss://nos.lol");
+    #[test]
+    fn test_validate_relay_url_normalization_extra() {
+        assert_eq!(validate_relay_url("wss://relay.damus.io/").unwrap(), "wss://relay.damus.io");
+        assert_eq!(validate_relay_url("wss://nos.lol/").unwrap(), "wss://nos.lol");
+    }
 }

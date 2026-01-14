@@ -7,6 +7,7 @@ use aes_gcm::{
 use ::hkdf::Hkdf;
 use nostr_sdk::prelude::*;
 use sha2::Sha256;
+use zeroize::Zeroizing;
 
 /// Encrypt chunk data using NIP-44 (self-encryption to own public key)
 ///
@@ -39,13 +40,13 @@ pub fn decrypt_chunk(keys: &Keys, encrypted_content: &str) -> anyhow::Result<Vec
 
 /// Derive AES-256 key from Nostr secret key using HKDF-SHA256
 fn derive_aes_key(secret_key: &SecretKey) -> Key<Aes256Gcm> {
-    let ikm = secret_key.to_secret_bytes();
-    let hkdf = Hkdf::<Sha256>::new(None, &ikm);
-    let mut okm = [0u8; 32];
+    let ikm = Zeroizing::new(secret_key.to_secret_bytes());
+    let hkdf = Hkdf::<Sha256>::new(None, ikm.as_slice());
+    let mut okm = Zeroizing::new([0u8; 32]);
     // Info string ensures domain separation for this specific usage
-    hkdf.expand(b"nostrsave-file-encryption-v1", &mut okm)
+    hkdf.expand(b"nostrsave-file-encryption-v1", okm.as_mut())
         .expect("HKDF expansion should not fail for correct length");
-    *Key::<Aes256Gcm>::from_slice(&okm)
+    *Key::<Aes256Gcm>::from_slice(okm.as_ref())
 }
 
 /// Encrypt data using AES-256-GCM with key derived from Nostr private key
@@ -69,8 +70,11 @@ pub fn encrypt_aes256_gcm(secret_key: &SecretKey, data: &[u8]) -> anyhow::Result
 
 /// Decrypt data using AES-256-GCM with key derived from Nostr private key
 pub fn decrypt_aes256_gcm(secret_key: &SecretKey, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-    if data.len() < 12 {
-        return Err(anyhow::anyhow!("Invalid encrypted data: too short for nonce"));
+    // Minimum: 12-byte nonce + 16-byte auth tag
+    if data.len() < 28 {
+        return Err(anyhow::anyhow!(
+            "Invalid encrypted data: too short for nonce and auth tag"
+        ));
     }
 
     let key = derive_aes_key(secret_key);
