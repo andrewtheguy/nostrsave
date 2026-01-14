@@ -190,9 +190,11 @@ Choose one of three modes via `--encryption <MODE>`:
 - **NIP-44:**
   - **Key Derivation:** Self-encryption using secret key + own public key
   - **Structure:** Standard NIP-44 format (ChaCha20-Poly1305 + HMAC-SHA256 for v2)
+  - **Integrity:** Authenticated encryption (HMAC-SHA256)
 
 - **None:**
   - **No encryption:** Data is compressed but not encrypted
+  - **Integrity:** Nostr event signatures + chunk hash tags (no authenticated encryption)
   - **Use case:** Public files where privacy is not required
 
 When encrypted (AES-256-GCM or NIP-44):
