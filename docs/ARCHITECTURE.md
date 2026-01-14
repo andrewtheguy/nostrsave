@@ -179,20 +179,26 @@ flowchart TB
 5. **Streaming-friendly:** Chunks are processed as events arrive per relay (sequential across relays)
 
 ## Encryption
+
+Choose one of three modes via `--encryption <MODE>`:
+
 - **AES-256-GCM (Default):**
-  - **Key Derivation:** HKDF-SHA256 derived from the Nostr secret key.
+  - **Key Derivation:** HKDF-SHA256 derived from the Nostr secret key alone
   - **Structure:** `[nonce (12B)][ciphertext][tag (16B)]`
-  - **Integrity:** Authenticated encryption ensures data integrity.
+  - **Integrity:** Authenticated encryption ensures data integrity
 
-- **NIP-44 (Optional):**
-  - **Self-encryption:** Encrypted to own public key.
-  - **Structure:** Standard NIP-44 format (ChaCha20-Poly1305 + HMAC-SHA256 for v2).
+- **NIP-44:**
+  - **Key Derivation:** Self-encryption using secret key + own public key
+  - **Structure:** Standard NIP-44 format (ChaCha20-Poly1305 + HMAC-SHA256 for v2)
 
-1. **Self-encryption:** Chunks are encrypted using your secret key + your public key
-2. **Only you can decrypt:** Only the owner (matching private key) can decrypt the file
+- **None:**
+  - **No encryption:** Data is compressed but not encrypted
+  - **Use case:** Public files where privacy is not required
+
+When encrypted (AES-256-GCM or NIP-44):
+1. **Owner-only decryption:** Only the owner (matching private key) can decrypt
+2. **Per-chunk encryption:** Each chunk is encrypted independently
 3. **Hash integrity:** File and chunk hashes are computed on original (unencrypted) data
-4. **Per-chunk encryption:** Each chunk is encrypted independently
-5. **Opt-out available:** Use `--encryption none` to upload unencrypted files
 
 ## Relay Discovery
 

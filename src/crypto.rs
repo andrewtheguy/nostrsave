@@ -188,4 +188,43 @@ mod tests {
         let data: Vec<u8> = (0..=max_working).map(|i| (i % 256) as u8).collect();
         assert!(encrypt_chunk(&keys, &data).is_err());
     }
+
+    #[test]
+    fn test_encrypt_decrypt_empty_data() {
+        let keys = Keys::generate();
+        let empty: &[u8] = b"";
+
+        let encrypted = encrypt_aes256_gcm(keys.secret_key(), empty).unwrap();
+        // Should have nonce (12) + tag (16) = 28 bytes minimum
+        assert_eq!(encrypted.len(), 28);
+
+        let decrypted = decrypt_aes256_gcm(keys.secret_key(), &encrypted).unwrap();
+        assert!(decrypted.is_empty());
+    }
+
+    #[test]
+    fn test_tampered_ciphertext_rejected() {
+        let keys = Keys::generate();
+        let data = b"sensitive data that must not be tampered with";
+
+        let mut encrypted = encrypt_aes256_gcm(keys.secret_key(), data).unwrap();
+        // Flip a byte in the ciphertext portion (after the 12-byte nonce)
+        encrypted[20] ^= 0xFF;
+
+        let result = decrypt_aes256_gcm(keys.secret_key(), &encrypted);
+        assert!(result.is_err(), "Tampered ciphertext should be rejected");
+    }
+
+    #[test]
+    fn test_truncated_ciphertext_rejected() {
+        let keys = Keys::generate();
+        let data = b"data that will be truncated";
+
+        let encrypted = encrypt_aes256_gcm(keys.secret_key(), data).unwrap();
+        // Truncate to remove part of the auth tag
+        let truncated = &encrypted[..encrypted.len() - 4];
+
+        let result = decrypt_aes256_gcm(keys.secret_key(), truncated);
+        assert!(result.is_err(), "Truncated ciphertext should be rejected");
+    }
 }
