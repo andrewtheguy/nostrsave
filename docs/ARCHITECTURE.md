@@ -71,7 +71,7 @@ Tags:
   - ["hash", "<chunk_hash>"]               # Chunk integrity
   - ["filename", "<name>"]                 # Original filename
   - ["size", "<bytes>"]                    # Chunk size
-  - ["encryption", "nip44|none"]            # Encryption algorithm
+  - ["encryption", "aes256gcm|nip44|none"]  # Encryption algorithm
 
 Content encoding:
 - If `encryption = aes256gcm`: `base85( aes256gcm_encrypt( zstd(chunk_bytes) ) )`

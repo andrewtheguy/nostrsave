@@ -1,6 +1,6 @@
 [package]
 name = "nostrsave"
-version = "0.2.17"
+version = "0.2.18"
 edition = "2021"
 
 [dependencies]
@@ -21,8 +21,10 @@ toml = "0.8"
 # Hashing
 sha2 = "0.10"
 hex = "0.4"
-aes-gcm = "0.10"
-hkdf = "0.12"
+
+# Encryption / Key Derivation (for AES-256-GCM mode; nostr-sdk's nip44 uses ChaCha20-Poly1305)
+aes-gcm = "0.10.3"
+hkdf = "0.12.4"
 
 # Compression + JSON-safe base85 encoding for Nostr payloads
 zstd = "0.13"

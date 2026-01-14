@@ -373,7 +373,6 @@ pub async fn execute(
         }
         let compressed = zstd_compress(&chunk.data)?;
         // Prepare content: always base85-encode payload for Nostr event.content
-        // Prepare content: always base85-encode payload for Nostr event.content
         let content = match encryption {
             EncryptionAlgorithm::Nip44 => {
                 let encrypted = crypto::encrypt_chunk(&keys, &compressed)?;

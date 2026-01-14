@@ -7,10 +7,13 @@ pub fn zstd_compress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     zstd_compress_with_level(data, ZSTD_COMPRESSION_LEVEL)
 }
 
+/// Compress data using zstd at the specified compression level.
+///
+/// Checksum is intentionally disabled to save 4 bytes per chunk, since data
+/// integrity is already provided by AES-GCM authentication tags or Nostr
+/// event signatures.
 pub fn zstd_compress_with_level(data: &[u8], level: i32) -> anyhow::Result<Vec<u8>> {
     let mut encoder = zstd::stream::Encoder::new(Vec::new(), level)?;
-    // AES-GCM and Nostr signatures already provide integrity
-    // Disabling zstd checksum saves 4 bytes per chunk
     encoder.include_checksum(false)?;
     encoder.write_all(data)?;
     encoder.finish().map_err(|e| anyhow::anyhow!("zstd compression failed: {}", e))
