@@ -12,8 +12,8 @@ use url::{Host, Url};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EncryptionAlgorithm {
-    #[default]
     Nip44,
+    #[default]
     Aes256Gcm,
     None,
 }
