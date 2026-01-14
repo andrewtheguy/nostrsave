@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 const ZSTD_COMPRESSION_LEVEL: i32 = 9;
 const MAX_DECOMPRESSED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
@@ -8,8 +8,12 @@ pub fn zstd_compress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn zstd_compress_with_level(data: &[u8], level: i32) -> anyhow::Result<Vec<u8>> {
-    zstd::stream::encode_all(Cursor::new(data), level)
-        .map_err(|e| anyhow::anyhow!("zstd compression failed: {}", e))
+    let mut encoder = zstd::stream::Encoder::new(Vec::new(), level)?;
+    // AES-GCM and Nostr signatures already provide integrity
+    // Disabling zstd checksum saves 4 bytes per chunk
+    encoder.include_checksum(false)?;
+    encoder.write_all(data)?;
+    encoder.finish().map_err(|e| anyhow::anyhow!("zstd compression failed: {}", e))
 }
 
 pub fn zstd_decompress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
