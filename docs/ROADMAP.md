@@ -32,25 +32,19 @@ A web page for downloading files without the CLI:
 - Could be hosted on IPFS or as a static site
 
 ### Relay Discovery Cache
-Cache discovered relay test results in a persistent SQLite database for faster relay selection and usage tracking:
-- Store relay URLs with test results (latency, can_write, can_read, round_trip_ms)
-- Include timestamps for cache expiration (e.g., 24-hour TTL)
-- Store in `~/.config/nostrsave/relay_cache.db`
+Implemented (current): `discover-relays` persists the working relay list to `data_relays.sqlite3` in the config directory and tracks `last_used_at` + a rolling cursor for upload rotation.
+
+Future expansion ideas:
+- Store test metrics (latency/can_write/can_read/round_trip_ms) and success/failure history
+- Add cache expiration / TTL and `--force-refresh`
 - Skip re-testing recently validated relays during `discover-relays`
-- Provide `--force-refresh` flag to ignore cache
-- Track relay usage counts and last-used timestamps for rotation
-- Enable smarter relay selection based on historical performance
-- Could track success/failure rates over time for reliability scoring
 
 ### Rotating Data Relay Mode (depends on Relay Discovery Cache)
-Configure a large pool of data relays and rotate through them during uploads:
-- Config specifies a pool of candidate relays
-- Each upload session selects a subset of relays from the pool
-- Optionally rotate relays within a session (different chunks to different relays)
-- Manifest records which relays received which chunks
-- Spreads storage load across many relays
-- Reduces dependency on any single relay's availability
-- Avoids rate limits by distributing requests across relays
+Implemented (current): set `[data_relays].source = "discovered"` and `[data_relays].batch_size` to rotate through the discovered relay pool across uploads (1–N, then N+1–2N, etc.).
+
+Future expansion ideas:
+- Rotate within a single upload session (different chunks to different relays)
+- Record per-chunk relay placement in the manifest
 
 ### Space-Efficient Download Mode
 Reduce disk usage during download by purging chunks from the session database as they are written to the output file:
@@ -88,4 +82,3 @@ Evolve the flat file index into a hierarchical structure using folder entries:
 - Root directory remains anchored to the user's npub
 - Enables organized file management (add/remove/rename) within a folder-based UI
 - Maintains compatibility with the existing index-based discovery mechanism
-

@@ -88,13 +88,19 @@ Or create `~/.config/nostrsave/config.toml`:
 
 ```toml
 [identity]
-# Option 1: Inline key
-private_key = "nsec1..."
-
-# Option 2: Key file path (supports ~)
+# Key file path (supports ~ expansion)
 key_file = "~/.config/nostrsave/nostr.key"
 
 [data_relays]
+# Where to get data relays from:
+# - "config" (default): use the hard-coded urls below
+# - "discovered": use relays saved by `nostrsave discover-relays` (stored alongside your config.toml as `data_relays.sqlite3`)
+source = "config"
+
+# `batch_size` is only used when `source = "discovered"` (ignored for `source = "config"`). It controls how many relays are selected/used per upload operation.
+# Default: 6. Recommended: 1–32 (larger values can increase throughput, but use more CPU/memory and open more connections).
+batch_size = 6
+
 # Relays for storing file chunks (need write access)
 urls = [
     "wss://relay.damus.io",
@@ -193,6 +199,8 @@ Options:
   --chunk-size <BYTES>    Payload size for round-trip test
 ```
 
+In bulk mode, `discover-relays` also persists the working relays list into `data_relays.sqlite3` in the same directory as your config.toml for use with `data_relays.source = "discovered"`.
+
 ### keygen
 
 Generate a new Nostr keypair.
@@ -216,7 +224,7 @@ Example workflow:
 ```bash
 nostrsave discover-relays --relay-source nostrwatch
 nostrsave best-relays relays-nostrwatch.json -c 10
-# Copy output to config.toml [relays] section
+# Copy output to your `config.toml` under `[data_relays].urls` (or set `data_relays.source = "discovered"` to use the saved DB).
 ```
 
 ## Resumable Sessions

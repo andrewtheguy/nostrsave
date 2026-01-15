@@ -7,6 +7,7 @@ mod error;
 mod manifest;
 mod nostr;
 mod relay;
+mod relays_db;
 mod session;
 
 use clap::Parser;

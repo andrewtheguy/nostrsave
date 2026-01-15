@@ -227,6 +227,17 @@ impl UploadSession {
         Ok(chunks)
     }
 
+    /// Get the relay list saved in this upload session.
+    pub fn get_relays(&self) -> anyhow::Result<Vec<String>> {
+        let relays_json: String = self.conn.query_row(
+            "SELECT relays FROM session_meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let relays: Vec<String> = serde_json::from_str(&relays_json)?;
+        Ok(relays)
+    }
+
     /// Delete the session database (call on successful completion).
     pub fn cleanup(self) -> anyhow::Result<()> {
         let db_path = self.db_path.clone();
@@ -264,5 +275,64 @@ impl UploadSession {
         remove_session_lock(&db_path)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_session_persists_relay_list_for_resume() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("file.bin");
+        std::fs::write(&file_path, b"hello").unwrap();
+
+        // Unique-ish identifier to avoid collisions in the shared temp sessions dir
+        let file_hash_full = format!(
+            "test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        let relays = vec![
+            "wss://relay1.example.com".to_string(),
+            "wss://relay2.example.com".to_string(),
+        ];
+
+        struct CleanupGuard {
+            file_hash_full: String,
+        }
+        impl Drop for CleanupGuard {
+            fn drop(&mut self) {
+                let _ = UploadSession::delete(&self.file_hash_full);
+            }
+        }
+        let _guard = CleanupGuard {
+            file_hash_full: file_hash_full.clone(),
+        };
+
+        let meta = UploadMeta {
+            file_path: file_path.clone(),
+            file_hash: "deadbeef".to_string(),
+            file_hash_full: file_hash_full.clone(),
+            file_size: std::fs::metadata(&file_path).unwrap().len(),
+            chunk_size: 1024,
+            total_chunks: 1,
+            pubkey: "npub1test".to_string(),
+            encryption: EncryptionAlgorithm::Aes256Gcm,
+            relays: relays.clone(),
+        };
+
+        let session = UploadSession::create(meta).unwrap();
+        assert_eq!(session.get_relays().unwrap(), relays);
+        drop(session); // keep DB for resume; release lock by dropping the session
+
+        // Ensure resume path can read the relays back after reopening.
+        let reopened = UploadSession::open(&file_hash_full).unwrap();
+        assert_eq!(reopened.get_relays().unwrap(), relays);
+        reopened.cleanup().unwrap();
     }
 }

@@ -1,5 +1,5 @@
 use crate::chunking::FileChunker;
-use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
+use crate::config::{get_data_relays_for_upload, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
@@ -97,7 +97,6 @@ pub async fn execute(
     let private_key = get_private_key(key_file)?;
     let keys = Keys::parse(&private_key)?;
 
-    let data_relays = get_data_relays()?;
     let index_relays = get_index_relays()?;
 
     // 2. Verify file exists
@@ -242,6 +241,23 @@ pub async fn execute(
         }
     }
 
+    // Select relays:
+    // - fresh upload: use config (and in discovered mode, advance the batch cursor)
+    // - resume: use the relay list saved in the session DB to ensure consistent continuation
+    let data_relays = if resuming {
+        let session = UploadSession::open(&file_hash_full)?;
+        let relays = session.get_relays()?;
+        drop(session);
+        if relays.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Upload session has no relays saved. Delete the session to start fresh."
+            ));
+        }
+        relays
+    } else {
+        get_data_relays_for_upload()?
+    };
+
     println!("Splitting file into chunks...");
     let chunker = FileChunker::new(chunk_size)?;
     let (file_hash, chunks) = chunker.split_file(&file)?;
@@ -255,6 +271,9 @@ pub async fn execute(
 
     // 4. Setup client and connect to data relays
     println!("\nConnecting to {} data relays...", data_relays.len());
+    for relay in &data_relays {
+        println!("  {}", relay);
+    }
 
     let client = Client::new(keys.clone());
     let mut added_relays = Vec::new();
@@ -300,10 +319,8 @@ pub async fn execute(
         connected_relays.len(),
         added_relays.len()
     );
-    if verbose {
-        for relay in &connected_relays {
-            println!("  Connected: {}", relay);
-        }
+    for relay in &connected_relays {
+        println!("  Connected: {}", relay);
     }
 
     // 5. Create manifest (store data relays in manifest for download)

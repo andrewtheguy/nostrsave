@@ -1,9 +1,10 @@
 use crate::cli::RelaySource;
-use crate::config::get_index_relays;
+use crate::config::{ensure_config_dir, get_index_relays};
 use crate::relay::{
     discover_relays_from_index, discover_relays_from_nostr_watch, test_relays_concurrent,
     RelayTestResult,
 };
+use crate::relays_db::{relays_db_path, upsert_discovered_relays};
 use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::warn;
@@ -274,6 +275,16 @@ pub async fn execute(
     file.sync_all()?;
 
     println!("Saved to: {}", output_path.display());
+
+    // Also persist working relays into the config directory DB for future uploads
+    let config_dir = ensure_config_dir()?;
+    let discovered_urls: Vec<String> = output_data
+        .working_relays
+        .iter()
+        .map(|r| r.url.clone())
+        .collect();
+    upsert_discovered_relays(&config_dir, &discovered_urls)?;
+    println!("Saved discovered relays DB: {}", relays_db_path(&config_dir).display());
 
     // Suggest next step
     println!(
