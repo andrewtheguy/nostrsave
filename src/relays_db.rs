@@ -113,6 +113,8 @@ pub fn select_next_discovered_relay_batch(
     }
 
     let total = relays.len();
+    // SAFETY: relays.is_empty() is checked above; total > 0 is required for modulo below.
+    assert!(total > 0);
     let mut next_offset: usize = tx
         .query_row(
             "SELECT next_offset FROM relay_selection_state WHERE id = 1",
@@ -269,6 +271,7 @@ mod tests {
         let err = select_next_discovered_relay_batch(dir, 6)
             .expect_err("expected empty discovered_relays to error");
         assert!(err.to_string().contains("No discovered relays found"));
+        assert_eq!(state_next_offset(dir), None);
     }
 
     #[test]
