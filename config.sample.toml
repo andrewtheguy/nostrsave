@@ -13,6 +13,9 @@ key_file = "~/.config/nostrsave/nostr.key"
 # - source = "config" (default): use the hard-coded urls below
 # - source = "discovered": use relays from `nostrsave discover-relays` (stored in the same directory as your config.toml as `data_relays.sqlite3`)
 source = "config"
+
+# `batch_size` controls how many relays are selected/used per upload operation when `source = "discovered"`.
+# Default: `batch_size = 6`. Must be >= 1. Recommended: 1–32 (larger values can increase throughput, but use more CPU/memory and open more connections).
 batch_size = 6
 
 urls = [

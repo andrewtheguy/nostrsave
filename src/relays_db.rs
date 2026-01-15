@@ -78,11 +78,7 @@ pub fn list_discovered_relays(config_dir: &Path) -> anyhow::Result<Vec<String>> 
         "SELECT url FROM discovered_relays ORDER BY position ASC, url ASC",
     )?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    let mut urls = Vec::new();
-    for url in rows {
-        urls.push(url?);
-    }
-    Ok(urls)
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 pub fn select_next_discovered_relay_batch(
