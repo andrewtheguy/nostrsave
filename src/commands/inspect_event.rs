@@ -67,10 +67,10 @@ pub async fn execute(
     }
     println!("Content length: {}", event.content.len());
 
+    let json = serde_json::to_string_pretty(event)?;
+    println!("\nFull event JSON:\n{}", json);
+
     if verbose {
-        let json = serde_json::to_string_pretty(event)?;
-        println!("\nFull event JSON:\n{}", json);
-    } else {
         println!("\nContent (as stored):");
         println!("{}", event.content);
     }
