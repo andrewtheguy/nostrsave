@@ -97,7 +97,6 @@ pub async fn execute(
     let private_key = get_private_key(key_file)?;
     let keys = Keys::parse(&private_key)?;
 
-    let data_relays = get_data_relays_for_upload()?;
     let index_relays = get_index_relays()?;
 
     // 2. Verify file exists
@@ -241,6 +240,23 @@ pub async fn execute(
             }
         }
     }
+
+    // Select relays:
+    // - fresh upload: use config (and in discovered mode, advance the batch cursor)
+    // - resume: use the relay list saved in the session DB to ensure consistent continuation
+    let data_relays = if resuming {
+        let session = UploadSession::open(&file_hash_full)?;
+        let relays = session.get_relays()?;
+        drop(session);
+        if relays.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Upload session has no relays saved. Delete the session to start fresh."
+            ));
+        }
+        relays
+    } else {
+        get_data_relays_for_upload()?
+    };
 
     println!("Splitting file into chunks...");
     let chunker = FileChunker::new(chunk_size)?;

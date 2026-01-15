@@ -227,6 +227,17 @@ impl UploadSession {
         Ok(chunks)
     }
 
+    /// Get the relay list saved in this upload session.
+    pub fn get_relays(&self) -> anyhow::Result<Vec<String>> {
+        let relays_json: String = self.conn.query_row(
+            "SELECT relays FROM session_meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let relays: Vec<String> = serde_json::from_str(&relays_json)?;
+        Ok(relays)
+    }
+
     /// Delete the session database (call on successful completion).
     pub fn cleanup(self) -> anyhow::Result<()> {
         let db_path = self.db_path.clone();
