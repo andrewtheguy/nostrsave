@@ -1,5 +1,5 @@
 use crate::cli::RelaySource;
-use crate::config::{active_config_dir, get_index_relays};
+use crate::config::{ensure_config_dir, get_index_relays};
 use crate::relay::{
     discover_relays_from_index, discover_relays_from_nostr_watch, test_relays_concurrent,
     RelayTestResult,
@@ -277,7 +277,7 @@ pub async fn execute(
     println!("Saved to: {}", output_path.display());
 
     // Also persist working relays into the config directory DB for future uploads
-    let config_dir = active_config_dir()?;
+    let config_dir = ensure_config_dir()?;
     let discovered_urls: Vec<String> = output_data
         .working_relays
         .iter()

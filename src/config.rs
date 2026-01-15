@@ -9,7 +9,7 @@ use url::{Host, Url};
 // ============================================================================
 
 /// Data relay source selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum DataRelaySource {
     /// Use the URLs provided in `data_relays.urls`.
@@ -143,7 +143,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 /// Get the active config directory.
 ///
 /// - If a config file exists in one of the known locations, returns its parent directory.
-/// - Otherwise, returns the default config directory (~/.config/nostrsave), creating it if needed.
+/// - Otherwise, returns the default config directory (~/.config/nostrsave).
 pub fn active_config_dir() -> anyhow::Result<PathBuf> {
     for path in toml_config_paths() {
         if path.exists() {
@@ -160,8 +160,14 @@ pub fn active_config_dir() -> anyhow::Result<PathBuf> {
     let dir = default
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Invalid default config path: {}", default.display()))?;
-    std::fs::create_dir_all(dir)?;
     Ok(dir.to_path_buf())
+}
+
+/// Ensure the active config directory exists, creating it if needed.
+pub fn ensure_config_dir() -> anyhow::Result<PathBuf> {
+    let dir = active_config_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 /// TOML config file locations to check (in order)
@@ -386,30 +392,33 @@ pub(crate) fn validate_relay_list(urls: &[String]) -> anyhow::Result<Vec<String>
     Ok(relays)
 }
 
-/// Get data relays from config (required for upload)
-pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
+fn get_data_relays_config() -> anyhow::Result<DataRelaysConfig> {
     let config = require_config()?;
-
-    let data_relays = config.data_relays.ok_or_else(|| {
+    config.data_relays.ok_or_else(|| {
         anyhow::anyhow!(
             "Missing [data_relays] section in config.\n\
              Add data relays for uploading file chunks."
         )
-    })?;
+    })
+}
 
-    if data_relays.batch_size == 0 {
-        return Err(anyhow::anyhow!("data_relays.batch_size must be >= 1"));
+fn get_config_relays(data_relays: &DataRelaysConfig) -> anyhow::Result<Vec<String>> {
+    let relays = validate_relay_list(&data_relays.urls)?;
+    if relays.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No valid relay URLs in [data_relays] section"
+        ));
     }
+    Ok(relays)
+}
+
+/// Get data relays from config (required for upload)
+pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
+    let data_relays = get_data_relays_config()?;
 
     match data_relays.source {
         DataRelaySource::Config => {
-            let relays = validate_relay_list(&data_relays.urls)?;
-            if relays.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "No valid relay URLs in [data_relays] section"
-                ));
-            }
-            Ok(relays)
+            get_config_relays(&data_relays)
         }
         DataRelaySource::Discovered => {
             let config_dir = active_config_dir()?;
@@ -427,13 +436,7 @@ pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
 
 /// Get data relays for upload. In discovered mode, returns the next batch and advances the cursor.
 pub fn get_data_relays_for_upload() -> anyhow::Result<Vec<String>> {
-    let config = require_config()?;
-    let data_relays = config.data_relays.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Missing [data_relays] section in config.\n\
-             Add data relays for uploading file chunks."
-        )
-    })?;
+    let data_relays = get_data_relays_config()?;
 
     if data_relays.batch_size == 0 {
         return Err(anyhow::anyhow!("data_relays.batch_size must be >= 1"));
@@ -441,13 +444,7 @@ pub fn get_data_relays_for_upload() -> anyhow::Result<Vec<String>> {
 
     match data_relays.source {
         DataRelaySource::Config => {
-            let relays = validate_relay_list(&data_relays.urls)?;
-            if relays.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "No valid relay URLs in [data_relays] section"
-                ));
-            }
-            Ok(relays)
+            get_config_relays(&data_relays)
         }
         DataRelaySource::Discovered => {
             let config_dir = active_config_dir()?;
