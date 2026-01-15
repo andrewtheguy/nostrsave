@@ -2,7 +2,6 @@ use crate::config::EncryptionAlgorithm;
 use crate::config::validate_relay_url;
 use nostr_sdk::EventId;
 
-const EVENT_ID_HEX_LEN: usize = 64;
 const SHA256_HEX_LEN: usize = 64;
 const MIN_CHUNK_SIZE: usize = 1024;
 const MAX_CHUNK_SIZE: usize = 65408;
@@ -59,19 +58,14 @@ pub fn parse_file_hash(s: &str) -> Result<String, String> {
     Ok(raw.to_ascii_lowercase())
 }
 
-/// Parse and validate event id (64-hex)
+/// Parse and validate event id (hex, bech32, or NIP-21)
 pub fn parse_event_id(s: &str) -> Result<EventId, String> {
     let trimmed = s.trim();
-    if trimmed.len() != EVENT_ID_HEX_LEN {
-        return Err(format!(
-            "event id must be {} hex characters",
-            EVENT_ID_HEX_LEN
-        ));
+    if trimmed.is_empty() {
+        return Err("event id cannot be empty".to_string());
     }
-    if !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err("event id must be hex characters".to_string());
-    }
-    EventId::from_hex(trimmed).map_err(|e| format!("Invalid event id: {e}"))
+    EventId::parse(trimmed)
+        .map_err(|e| format!("Invalid event id: {} (expected 64-hex, note1..., or nostr:...)", e))
 }
 
 /// Parse and validate a relay URL (wss:// or ws://)
@@ -85,7 +79,7 @@ mod tests {
         parse_chunk_size, parse_encryption, parse_event_id, parse_file_hash, parse_relay_url,
     };
     use crate::config::EncryptionAlgorithm;
-    use nostr_sdk::EventId;
+    use nostr_sdk::{EventId, ToBech32};
 
     #[test]
     fn test_parse_event_id_accepts_hex() {
@@ -103,6 +97,14 @@ mod tests {
     fn test_parse_event_id_rejects_non_hex() {
         let input = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
         assert!(parse_event_id(input).is_err());
+    }
+
+    #[test]
+    fn test_parse_event_id_accepts_note() {
+        let hex = "0000000000000000000000000000000000000000000000000000000000000001";
+        let event_id = EventId::from_hex(hex).unwrap();
+        let note = event_id.to_bech32().unwrap();
+        assert_eq!(parse_event_id(&note).unwrap(), event_id);
     }
 
     #[test]

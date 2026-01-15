@@ -148,7 +148,7 @@ pub enum Commands {
         #[arg(value_name = "RELAY", value_parser = parse_relay_url)]
         relay: String,
 
-        /// Event ID (64-hex)
+        /// Event ID (64-hex, note1..., or nostr:...)
         #[arg(value_name = "EVENT_ID", value_parser = parse_event_id)]
         event_id: EventId,
 
