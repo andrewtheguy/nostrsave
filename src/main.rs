@@ -1,5 +1,6 @@
 mod chunking;
 mod cli;
+mod cli_parsers;
 mod commands;
 mod config;
 mod crypto;
@@ -81,6 +82,20 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::BestRelays { input, count } => {
             commands::best_relays::execute(input, count)?;
+        }
+        Commands::InspectEvent {
+            relay,
+            event_id,
+            decrypt,
+        } => {
+            commands::inspect_event::execute(
+                relay,
+                event_id,
+                decrypt,
+                cli.key_file.as_deref(),
+                cli.verbose,
+            )
+            .await?;
         }
     }
 
