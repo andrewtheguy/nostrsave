@@ -255,6 +255,9 @@ pub async fn execute(
 
     // 4. Setup client and connect to data relays
     println!("\nConnecting to {} data relays...", data_relays.len());
+    for relay in &data_relays {
+        println!("  {}", relay);
+    }
 
     let client = Client::new(keys.clone());
     let mut added_relays = Vec::new();
@@ -300,10 +303,8 @@ pub async fn execute(
         connected_relays.len(),
         added_relays.len()
     );
-    if verbose {
-        for relay in &connected_relays {
-            println!("  Connected: {}", relay);
-        }
+    for relay in &connected_relays {
+        println!("  Connected: {}", relay);
     }
 
     // 5. Create manifest (store data relays in manifest for download)
