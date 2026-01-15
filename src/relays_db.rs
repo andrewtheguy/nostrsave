@@ -125,12 +125,14 @@ pub fn select_next_discovered_relay_batch(
 
     next_offset %= total;
 
-    let remaining = total - next_offset;
-    let take = remaining.min(batch_size);
+    let take = batch_size.min(total);
+    let mut selected = Vec::with_capacity(take);
+    for i in 0..take {
+        let idx = (next_offset + i) % total;
+        selected.push(relays[idx].clone());
+    }
 
-    let selected: Vec<String> = relays[next_offset..next_offset + take].to_vec();
-
-    // Advance offset (wrap after reaching the end; do not wrap within a single batch)
+    // Advance offset by the number returned (wrap as needed)
     let new_offset = (next_offset + take) % total;
 
     tx.execute(
