@@ -1,4 +1,4 @@
-use crate::config::EncryptionAlgorithm;
+use crate::config::{EncryptionAlgorithm, Nip65Mode};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -208,6 +208,13 @@ pub enum Commands {
         /// Encryption algorithm: aes256gcm (default), nip44, or none
         #[arg(short, long, value_parser = parse_encryption)]
         encryption: Option<EncryptionAlgorithm>,
+
+        /// NIP-65 outbox mode for relay discovery:
+        /// off (default) - only use configured relays
+        /// merge - add NIP-65 write relays to configured relays
+        /// replace - use only NIP-65 write relays
+        #[arg(long, value_enum)]
+        nip65: Option<Nip65Mode>,
 
         /// Force delete corrupted session without prompting
         #[arg(long)]

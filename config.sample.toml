@@ -32,3 +32,14 @@ urls = [
 # Values: "aes256gcm" (default), "nip44", or "none"
 # Can be overridden with --encryption flag
 # algorithm = "aes256gcm"
+
+# [outbox]
+# Optional: NIP-65 outbox model for relay discovery
+# When enabled, fetches your NIP-65 relay list (kind 10002) to discover
+# additional write relays for improved event durability.
+# Values:
+#   "off" (default) - Only use configured relays
+#   "merge" - Add NIP-65 write relays to configured relays
+#   "replace" - Use only NIP-65 write relays (ignore configured)
+# Can be overridden with --nip65 flag
+# mode = "off"

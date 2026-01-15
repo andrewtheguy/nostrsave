@@ -1,5 +1,5 @@
 use crate::chunking::FileChunker;
-use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
+use crate::config::{get_data_relays, get_index_relays, get_nip65_mode, get_private_key, EncryptionAlgorithm, Nip65Mode};
 use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
@@ -7,6 +7,7 @@ use crate::nostr::{
     parse_file_index_event, ChunkMetadata, FileIndex, FileIndexEntry, MAX_ENTRIES_PER_PAGE,
 };
 use crate::nostr::codec::{base85_encode_json_safe, zstd_compress};
+use crate::relay::fetch_user_write_relays;
 use crate::session::{compute_file_sha512, UploadMeta, UploadSession};
 use indicatif::{HumanBytes, ProgressBar, ProgressStyle};
 use log::{error, warn};
@@ -90,6 +91,7 @@ pub async fn execute(
     output: Option<PathBuf>,
     key_file: Option<&str>,
     encryption: EncryptionAlgorithm,
+    nip65: Option<Nip65Mode>,
     force: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
@@ -97,8 +99,69 @@ pub async fn execute(
     let private_key = get_private_key(key_file)?;
     let keys = Keys::parse(&private_key)?;
 
-    let data_relays = get_data_relays()?;
-    let index_relays = get_index_relays()?;
+    let mut data_relays = get_data_relays()?;
+    let mut index_relays = get_index_relays()?;
+
+    // Apply NIP-65 outbox discovery if enabled
+    let nip65_mode = nip65.unwrap_or_else(get_nip65_mode);
+    if nip65_mode != Nip65Mode::Off {
+        println!("Discovering NIP-65 write relays...");
+
+        match fetch_user_write_relays(
+            &keys.public_key(),
+            &index_relays,
+            Duration::from_secs(10),
+        )
+        .await
+        {
+            Ok(nip65_relays) => {
+                if verbose {
+                    println!("  Found {} write relays from NIP-65:", nip65_relays.len());
+                    for relay in &nip65_relays {
+                        println!("    - {}", relay);
+                    }
+                } else {
+                    println!("  Found {} write relays from NIP-65", nip65_relays.len());
+                }
+
+                match nip65_mode {
+                    Nip65Mode::Merge => {
+                        // Add NIP-65 relays to configured relays (deduplicated)
+                        let mut combined_data: HashSet<String> =
+                            data_relays.iter().cloned().collect();
+                        combined_data.extend(nip65_relays.clone());
+                        data_relays = combined_data.into_iter().collect();
+
+                        let mut combined_index: HashSet<String> =
+                            index_relays.iter().cloned().collect();
+                        combined_index.extend(nip65_relays);
+                        index_relays = combined_index.into_iter().collect();
+
+                        println!(
+                            "  Merged: {} data relays, {} index relays",
+                            data_relays.len(),
+                            index_relays.len()
+                        );
+                    }
+                    Nip65Mode::Replace => {
+                        // Replace configured relays with NIP-65 relays
+                        data_relays = nip65_relays.clone();
+                        index_relays = nip65_relays;
+                        println!(
+                            "  Replaced: using {} NIP-65 relays for both data and index",
+                            data_relays.len()
+                        );
+                    }
+                    Nip65Mode::Off => unreachable!(),
+                }
+            }
+            Err(e) => {
+                // Graceful fallback: log warning and continue with configured relays
+                warn!("NIP-65 discovery failed: {}. Using configured relays.", e);
+                println!("  Warning: NIP-65 discovery failed, using configured relays");
+            }
+        }
+    }
 
     // 2. Verify file exists
     if !file.exists() {

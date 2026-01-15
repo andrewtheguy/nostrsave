@@ -18,6 +18,19 @@ pub enum EncryptionAlgorithm {
     None,
 }
 
+/// NIP-65 outbox mode for relay discovery
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Nip65Mode {
+    /// Disabled: only use configured relays (default)
+    #[default]
+    Off,
+    /// Merge NIP-65 write relays with configured relays
+    Merge,
+    /// Replace configured relays with NIP-65 write relays
+    Replace,
+}
+
 impl std::fmt::Display for EncryptionAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -52,6 +65,13 @@ pub struct Config {
     pub data_relays: Option<RelaysConfig>,
     pub index_relays: Option<RelaysConfig>,
     pub encryption: Option<EncryptionConfig>,
+    pub outbox: Option<OutboxConfig>,
+}
+
+/// NIP-65 outbox configuration
+#[derive(Debug, Deserialize)]
+pub struct OutboxConfig {
+    pub mode: Nip65Mode,
 }
 
 /// Encryption configuration
@@ -381,6 +401,16 @@ pub fn get_encryption_algorithm() -> EncryptionAlgorithm {
         }
     }
     EncryptionAlgorithm::default()
+}
+
+/// Get NIP-65 outbox mode from config, or return default (Off)
+pub fn get_nip65_mode() -> Nip65Mode {
+    if let Some(config) = load_config() {
+        if let Some(outbox) = config.outbox {
+            return outbox.mode;
+        }
+    }
+    Nip65Mode::default()
 }
 
 

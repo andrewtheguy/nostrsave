@@ -323,6 +323,106 @@ fn extract_relays_from_nip65(event: &Event) -> Vec<String> {
         .collect()
 }
 
+/// Extract only write-capable relay URLs from a NIP-65 relay list event (kind 10002)
+/// Returns relays where marker is "write" or absent (both read+write)
+/// Skips relays with marker "read" (read-only)
+pub fn extract_write_relays_from_nip65(event: &Event) -> Vec<String> {
+    event
+        .tags
+        .iter()
+        .filter(|t| {
+            t.single_letter_tag()
+                .map(|slt| slt.character == Alphabet::R)
+                .unwrap_or(false)
+        })
+        .filter_map(|t| {
+            let parts = t.as_slice();
+            // Tag format: ["r", "<url>", "<marker>"]
+            let url = parts.get(1)?;
+            let url = url.trim_end_matches('/').to_string();
+
+            if !url.starts_with("wss://") && !url.starts_with("ws://") {
+                return None;
+            }
+
+            // Check marker (3rd element): "read", "write", or absent (both)
+            let marker = parts.get(2).map(|s| s.as_str());
+            match marker {
+                Some("read") => None, // Skip read-only relays
+                _ => Some(url),       // Include "write" or no marker (both)
+            }
+        })
+        .collect()
+}
+
+/// Fetch the user's write relays from their NIP-65 relay list (kind 10002)
+/// Queries index relays for the user's relay list event and extracts write-capable relays
+pub async fn fetch_user_write_relays(
+    pubkey: &PublicKey,
+    index_relays: &[String],
+    timeout: Duration,
+) -> anyhow::Result<Vec<String>> {
+    use std::collections::HashSet;
+
+    let client = Client::default();
+
+    // Add index relays
+    for relay in index_relays {
+        let _ = client.add_relay(relay.to_string()).await;
+    }
+
+    client.connect().await;
+    client.wait_for_connection(timeout).await;
+
+    // Verify at least one relay connected
+    let connected_count = client
+        .relays()
+        .await
+        .into_iter()
+        .filter(|(_, relay)| relay.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        client.disconnect().await;
+        return Err(anyhow::anyhow!(
+            "Failed to connect to any index relay for NIP-65 discovery"
+        ));
+    }
+
+    // Query for user's NIP-65 relay list event (kind 10002)
+    let filter = Filter::new()
+        .kind(relay_list_kind())
+        .author(*pubkey)
+        .limit(1);
+
+    let mut write_relays: HashSet<String> = HashSet::new();
+
+    match client.fetch_events(filter, timeout).await {
+        Ok(events) => {
+            // Get the most recent event by created_at
+            if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
+                for relay_url in extract_write_relays_from_nip65(event) {
+                    write_relays.insert(relay_url);
+                }
+            }
+        }
+        Err(e) => {
+            client.disconnect().await;
+            return Err(anyhow::anyhow!("Failed to fetch NIP-65 relay list: {}", e));
+        }
+    }
+
+    client.disconnect().await;
+
+    if write_relays.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No write relays found in user's NIP-65 relay list"
+        ));
+    }
+
+    Ok(write_relays.into_iter().collect())
+}
+
 /// Discover relays by querying seed relays for NIP-66 and NIP-65 events
 /// - NIP-66 (kind 30166): Relay discovery events published by relay monitors
 /// - NIP-65 (kind 10002): Relay list events published by users
@@ -450,22 +550,19 @@ mod tests {
         };
         assert!(!no_read.is_working());
     }
-}
 
     #[tokio::test]
     async fn test_extract_relay_normalization() {
         use nostr_sdk::{EventBuilder, Keys, Tag};
 
         let keys = Keys::generate();
-        
+
         // Test NIP-66 (kind 30166)
-        let event = EventBuilder::new(
-            relay_discovery_kind(),
-            "",
-        )
-        .tag(Tag::custom(TagKind::d(), vec!["wss://relay.damus.io/"]))
-        .sign(&keys).await
-        .unwrap();
+        let event = EventBuilder::new(relay_discovery_kind(), "")
+            .tag(Tag::custom(TagKind::d(), vec!["wss://relay.damus.io/"]))
+            .sign(&keys)
+            .await
+            .unwrap();
 
         assert_eq!(
             extract_relay_from_nip66(&event),
@@ -473,19 +570,50 @@ mod tests {
         );
 
         // Test NIP-65 (kind 10002)
-        let event = EventBuilder::new(
-            relay_list_kind(),
-            "",
-        )
-        .tags(vec![
-            Tag::parse(vec!["r", "wss://nos.lol/"]).unwrap(),
-            Tag::parse(vec!["r", "wss://relay.damus.io"]).unwrap(),
-        ])
-        .sign(&keys).await
-        .unwrap();
+        let event = EventBuilder::new(relay_list_kind(), "")
+            .tags(vec![
+                Tag::parse(vec!["r", "wss://nos.lol/"]).unwrap(),
+                Tag::parse(vec!["r", "wss://relay.damus.io"]).unwrap(),
+            ])
+            .sign(&keys)
+            .await
+            .unwrap();
 
         let relays = extract_relays_from_nip65(&event);
         assert!(relays.contains(&"wss://nos.lol".to_string()));
         assert!(relays.contains(&"wss://relay.damus.io".to_string()));
         assert!(!relays.contains(&"wss://nos.lol/".to_string()));
     }
+
+    #[tokio::test]
+    async fn test_extract_write_relays_from_nip65() {
+        use nostr_sdk::{EventBuilder, Keys, Tag};
+
+        let keys = Keys::generate();
+
+        // Test NIP-65 write relay extraction with markers
+        let event = EventBuilder::new(relay_list_kind(), "")
+            .tags(vec![
+                // No marker = both (should be included)
+                Tag::parse(vec!["r", "wss://both.relay/"]).unwrap(),
+                // Write marker (should be included)
+                Tag::parse(vec!["r", "wss://write.relay", "write"]).unwrap(),
+                // Read marker (should be excluded)
+                Tag::parse(vec!["r", "wss://read.relay", "read"]).unwrap(),
+            ])
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        let write_relays = extract_write_relays_from_nip65(&event);
+
+        // Should include relays without marker and with "write" marker
+        assert!(write_relays.contains(&"wss://both.relay".to_string()));
+        assert!(write_relays.contains(&"wss://write.relay".to_string()));
+
+        // Should exclude relays with "read" marker
+        assert!(!write_relays.contains(&"wss://read.relay".to_string()));
+
+        assert_eq!(write_relays.len(), 2);
+    }
+}
