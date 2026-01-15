@@ -38,8 +38,11 @@ pub fn parse_file_hash(s: &str) -> Result<String, String> {
         return Err("hash cannot be empty".to_string());
     }
 
-    let raw = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("sha256:") {
-        &trimmed[7..]
+    let has_prefix = trimmed
+        .get(..7)
+        .is_some_and(|s| s.eq_ignore_ascii_case("sha256:"));
+    let raw = if has_prefix {
+        trimmed.get(7..).unwrap_or(trimmed)
     } else {
         trimmed
     };
@@ -105,6 +108,20 @@ mod tests {
         let event_id = EventId::from_hex(hex).unwrap();
         let note = event_id.to_bech32().unwrap();
         assert_eq!(parse_event_id(&note).unwrap(), event_id);
+    }
+
+    #[test]
+    fn test_parse_event_id_accepts_nip21() {
+        let hex = "0000000000000000000000000000000000000000000000000000000000000001";
+        let event_id = EventId::from_hex(hex).unwrap();
+        let note = event_id.to_bech32().unwrap();
+        let nip21 = format!("nostr:{note}");
+        assert_eq!(parse_event_id(&nip21).unwrap(), event_id);
+    }
+
+    #[test]
+    fn test_parse_event_id_rejects_empty() {
+        assert!(parse_event_id("").is_err());
     }
 
     #[test]
@@ -208,6 +225,11 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_chunk_size_rejects_non_numeric() {
+        assert!(parse_chunk_size("abc").is_err());
+    }
+
+    #[test]
     fn test_parse_encryption_accepts_values() {
         assert_eq!(
             parse_encryption("aes256gcm").unwrap(),
@@ -221,5 +243,10 @@ mod tests {
             parse_encryption("none").unwrap(),
             EncryptionAlgorithm::None
         );
+    }
+
+    #[test]
+    fn test_parse_encryption_rejects_unknown() {
+        assert!(parse_encryption("unknown").is_err());
     }
 }

@@ -19,7 +19,12 @@ fn hex_preview(bytes: &[u8]) -> String {
 
 fn utf8_preview(bytes: &[u8]) -> Option<String> {
     std::str::from_utf8(bytes).ok().map(|s| {
-        let end = s.len().min(CONTENT_PREVIEW_BYTES);
+        let end = s
+            .char_indices()
+            .take_while(|(i, _)| *i < CONTENT_PREVIEW_BYTES)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
         let mut out = s[..end].to_string();
         if s.len() > end {
             out.push_str("...");
@@ -50,6 +55,18 @@ pub async fn execute(
     client.add_relay(&relay).await?;
     client.connect().await;
     client.wait_for_connection(Duration::from_secs(10)).await;
+
+    let connected = client
+        .relays()
+        .await
+        .into_iter()
+        .any(|(_, r)| r.is_connected());
+    if !connected {
+        return Err(anyhow::anyhow!(
+            "Failed to connect to relay within timeout: {}",
+            relay
+        ));
+    }
 
     let filter = Filter::new().id(event_id);
     let events = client.fetch_events(filter, Duration::from_secs(10)).await?;
