@@ -1,5 +1,9 @@
+use crate::cli_parsers::{
+    parse_chunk_size, parse_encryption, parse_event_id, parse_file_hash, parse_relay_url,
+};
 use crate::config::EncryptionAlgorithm;
 use clap::{Parser, Subcommand, ValueEnum};
+use nostr_sdk::EventId;
 use std::path::PathBuf;
 
 /// Source for relay discovery
@@ -13,160 +17,6 @@ pub enum RelaySource {
     IndexRelays,
 }
 
-/// Minimum chunk size (1 KB)
-const MIN_CHUNK_SIZE: usize = 1024;
-/// Maximum chunk size (65408 bytes - tested limit for reliable relay storage; NIP-44 allows up to 65535)
-const MAX_CHUNK_SIZE: usize = 65408;
-
-/// Parse encryption algorithm from string
-fn parse_encryption(s: &str) -> Result<EncryptionAlgorithm, String> {
-    s.parse::<EncryptionAlgorithm>()
-}
-
-/// Parse and validate chunk size within allowed bounds
-fn parse_chunk_size(s: &str) -> Result<usize, String> {
-    let value: usize = s.parse().map_err(|_| format!("'{}' is not a valid number", s))?;
-
-    if value < MIN_CHUNK_SIZE {
-        return Err(format!(
-            "chunk size must be at least {} bytes (1 KB), got {}",
-            MIN_CHUNK_SIZE, value
-        ));
-    }
-    if value > MAX_CHUNK_SIZE {
-        return Err(format!(
-            "chunk size must be at most {} bytes, got {}",
-            MAX_CHUNK_SIZE, value
-        ));
-    }
-
-    Ok(value)
-}
-
-/// Parse and validate file hash (sha256:<hash> or raw 64-hex)
-fn parse_file_hash(s: &str) -> Result<String, String> {
-    const SHA256_HEX_LEN: usize = 64;
-
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return Err("hash cannot be empty".to_string());
-    }
-
-    let raw = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("sha256:") {
-        &trimmed[7..]
-    } else {
-        trimmed
-    };
-
-    if raw.len() != SHA256_HEX_LEN {
-        return Err(format!(
-            "hash must be {} hex characters, got {}",
-            SHA256_HEX_LEN,
-            raw.len()
-        ));
-    }
-    if !raw.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err("hash must be hex characters".to_string());
-    }
-
-    Ok(raw.to_ascii_lowercase())
-}
-
-/// Parse and validate a relay URL (wss:// or ws://)
-fn parse_relay_url(s: &str) -> Result<String, String> {
-    crate::config::validate_relay_url(s)
-        .map_err(|e| format!("Invalid relay URL: {e}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{parse_file_hash, parse_relay_url};
-
-    #[test]
-    fn test_parse_file_hash_accepts_raw_hex() {
-        let hash = "20d3323a2bcce6f25498b8911a397503a0a99fa92b6ba58d62788cb42b6e5459";
-        assert_eq!(parse_file_hash(hash).unwrap(), hash);
-    }
-
-    #[test]
-    fn test_parse_file_hash_accepts_sha256_prefix() {
-        let hash = "20d3323a2bcce6f25498b8911a397503a0a99fa92b6ba58d62788cb42b6e5459";
-        let input = format!("sha256:{hash}");
-        assert_eq!(parse_file_hash(&input).unwrap(), hash);
-    }
-
-    #[test]
-    fn test_parse_file_hash_normalizes_case() {
-        let input = "SHA256:20D3323A2BCCE6F25498B8911A397503A0A99FA92B6BA58D62788CB42B6E5459";
-        let expected = "20d3323a2bcce6f25498b8911a397503a0a99fa92b6ba58d62788cb42b6e5459";
-        assert_eq!(parse_file_hash(input).unwrap(), expected);
-    }
-
-    #[test]
-    fn test_parse_file_hash_rejects_empty() {
-        assert!(parse_file_hash(" ").is_err());
-    }
-
-    #[test]
-    fn test_parse_file_hash_rejects_wrong_length() {
-        assert!(parse_file_hash("abc123").is_err());
-    }
-
-    #[test]
-    fn test_parse_file_hash_rejects_non_hex() {
-        let input = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
-        assert!(parse_file_hash(input).is_err());
-    }
-
-    #[test]
-    fn test_parse_relay_url_accepts_wss() {
-        let input = "wss://relay.nostr.band";
-        assert_eq!(parse_relay_url(input).unwrap(), input);
-    }
-
-    #[test]
-    fn test_parse_relay_url_accepts_ws() {
-        let input = "ws://relay.nostr.band";
-        assert_eq!(parse_relay_url(input).unwrap(), input);
-    }
-
-    #[test]
-    fn test_parse_relay_url_rejects_trailing_comma() {
-        assert!(parse_relay_url("wss://relay.nostr.band,").is_err());
-    }
-
-    #[test]
-    fn test_parse_relay_url_rejects_bad_scheme() {
-        assert!(parse_relay_url("https://relay.nostr.band").is_err());
-        assert!(parse_relay_url("ftp://relay.nostr.band").is_err());
-    }
-
-    #[test]
-    fn test_parse_relay_url_rejects_missing_host() {
-        assert!(parse_relay_url("wss://").is_err());
-    }
-
-    #[test]
-    fn test_parse_relay_url_rejects_bad_host_labels() {
-        assert!(parse_relay_url("wss://relay..nostr.band").is_err());
-        assert!(parse_relay_url("wss://-relay.nostr.band").is_err());
-        assert!(parse_relay_url("wss://relay-.nostr.band").is_err());
-        assert!(parse_relay_url("wss://relay_nostr.band").is_err());
-    }
-
-    #[test]
-    fn test_parse_relay_url_rejects_userinfo_query_fragment() {
-        assert!(parse_relay_url("wss://user:pass@relay.nostr.band").is_err());
-        assert!(parse_relay_url("wss://relay.nostr.band?x=1").is_err());
-        assert!(parse_relay_url("wss://relay.nostr.band#frag").is_err());
-    }
-
-    #[test]
-    fn test_parse_relay_url_rejects_port_zero() {
-        assert!(parse_relay_url("wss://relay.nostr.band:0").is_err());
-    }
-
-}
 
 #[derive(Parser)]
 #[command(name = "nostrsave")]
@@ -290,5 +140,20 @@ pub enum Commands {
         /// Number of relays to output (default: 10)
         #[arg(short, long, default_value = "10")]
         count: usize,
+    },
+
+    /// Inspect a specific Nostr event on a relay
+    InspectEvent {
+        /// Relay URL to query (e.g., wss://relay.example.com)
+        #[arg(value_name = "RELAY", value_parser = parse_relay_url)]
+        relay: String,
+
+        /// Event ID (64-hex, note1..., or nostr:...)
+        #[arg(value_name = "EVENT_ID", value_parser = parse_event_id)]
+        event_id: EventId,
+
+        /// Attempt to decrypt chunk payloads (requires key file / config)
+        #[arg(long)]
+        decrypt: bool,
     },
 }

@@ -110,7 +110,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
     let current_index = match client.fetch_events(current_filter, Duration::from_secs(10)).await {
         Ok(events) => {
             if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
-                Some(parse_file_index_event(event)?)
+                Some((parse_file_index_event(event)?, event.id))
             } else {
                 None
             }
@@ -122,7 +122,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
     };
 
     // If no current index exists
-    let Some(current_index) = current_index else {
+    let Some((current_index, current_index_event_id)) = current_index else {
         client.disconnect().await;
         if page == 1 {
             println!("No file index found for this public key.");
@@ -138,9 +138,9 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
     let total_pages = current_index.total_pages();
 
     // Now fetch the requested page
-    let index = if page == 1 {
+    let (index, index_event_id) = if page == 1 {
         // Page 1 is the current index we already have
-        current_index
+        (current_index, current_index_event_id)
     } else {
         // Need to fetch an archive
         let total_archives = current_index.total_archives();
@@ -152,7 +152,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
                 match client.fetch_events(archive_filter, Duration::from_secs(10)).await {
                     Ok(events) => {
                         if let Some(event) = events.iter().max_by_key(|e| e.created_at) {
-                            parse_file_index_event(event)?
+                            (parse_file_index_event(event)?, event.id)
                         } else {
                             client.disconnect().await;
                             println!("Page {} (archive {}) not found on relays.", page, archive_number);
@@ -195,6 +195,7 @@ pub async fn execute(pubkey: Option<&str>, key_file: Option<&str>, from_data_rel
         total_pages,
         index.len()
     );
+    println!("Index event id: {}\n", index_event_id.to_bech32()?);
     println!(
         "  {:<3} {:<35} {:>12}  {:<20}  {:<5}  Hash",
         "#", "Name", "Size", "Uploaded", "Enc"
