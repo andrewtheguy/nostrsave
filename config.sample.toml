@@ -29,6 +29,6 @@ urls = [
 
 # [encryption]
 # Optional: Default encryption algorithm for uploads
-# Values: "nip44" (default, recommended) or "none"
+# Values: "aes256gcm" (default), "nip44", or "none"
 # Can be overridden with --encryption flag
-# algorithm = "nip44"
+# algorithm = "aes256gcm"

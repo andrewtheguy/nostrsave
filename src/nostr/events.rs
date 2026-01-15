@@ -213,6 +213,15 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
             let compressed = crypto::decrypt_chunk(keys, &encrypted)?;
             zstd_decompress(&compressed)?
         }
+        EncryptionAlgorithm::Aes256Gcm => {
+            // Need keys to decrypt
+            let keys = keys.ok_or_else(|| {
+                anyhow::anyhow!("Chunk is encrypted but no keys provided for decryption")
+            })?;
+            let encrypted_bytes = base85_decode_json_safe(&event.content)?;
+            let compressed = crypto::decrypt_aes256_gcm(keys.secret_key(), &encrypted_bytes)?;
+            zstd_decompress(&compressed)?
+        }
         EncryptionAlgorithm::None => {
             let compressed = base85_decode_json_safe(&event.content)?;
             zstd_decompress(&compressed)?
@@ -373,5 +382,111 @@ mod tests {
         let parsed = parse_chunk_event(&event, Some(&keys)).unwrap();
         assert_eq!(0, parsed.index);
         assert_eq!(data, parsed.data);
+    }
+
+    #[tokio::test]
+    async fn test_chunk_event_roundtrip_aes256_base85_zstd() {
+        let keys = Keys::generate();
+        let file_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let data: Vec<u8> = (0..20_000).map(|i| (i % 256) as u8).collect();
+        let chunk_hash = hex::encode(sha2::Sha256::digest(&data));
+
+        // Upload format: zstd -> aes256 -> base85-wrap bytes
+        let compressed = zstd_compress(&data).unwrap();
+        let encrypted = crypto::encrypt_aes256_gcm(keys.secret_key(), &compressed).unwrap();
+        let content = base85_encode_json_safe(&encrypted);
+        assert_json_string_no_escapes(&content);
+
+        let metadata = ChunkMetadata {
+            file_hash,
+            chunk_index: 0,
+            total_chunks: 1,
+            chunk_hash: &chunk_hash,
+            chunk_data: &data,
+            filename: "test.bin",
+            encryption: EncryptionAlgorithm::Aes256Gcm,
+        };
+
+        let event = create_chunk_event(&metadata, &content)
+            .unwrap()
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        let parsed = parse_chunk_event(&event, Some(&keys)).unwrap();
+        assert_eq!(0, parsed.index);
+        assert_eq!(data, parsed.data);
+    }
+
+    #[tokio::test]
+    async fn test_chunk_event_aes256_missing_keys() {
+        let keys = Keys::generate();
+        let file_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let data: Vec<u8> = (0..1_000).map(|i| (i % 256) as u8).collect();
+        let chunk_hash = hex::encode(sha2::Sha256::digest(&data));
+
+        let compressed = zstd_compress(&data).unwrap();
+        let encrypted = crypto::encrypt_aes256_gcm(keys.secret_key(), &compressed).unwrap();
+        let content = base85_encode_json_safe(&encrypted);
+
+        let metadata = ChunkMetadata {
+            file_hash,
+            chunk_index: 0,
+            total_chunks: 1,
+            chunk_hash: &chunk_hash,
+            chunk_data: &data,
+            filename: "test.bin",
+            encryption: EncryptionAlgorithm::Aes256Gcm,
+        };
+
+        let event = create_chunk_event(&metadata, &content)
+            .unwrap()
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        let result = parse_chunk_event(&event, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("no keys provided"),
+            "Expected 'no keys provided' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chunk_event_aes256_wrong_keys() {
+        let keys = Keys::generate();
+        let wrong_keys = Keys::generate();
+        let file_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let data: Vec<u8> = (0..1_000).map(|i| (i % 256) as u8).collect();
+        let chunk_hash = hex::encode(sha2::Sha256::digest(&data));
+
+        let compressed = zstd_compress(&data).unwrap();
+        let encrypted = crypto::encrypt_aes256_gcm(keys.secret_key(), &compressed).unwrap();
+        let content = base85_encode_json_safe(&encrypted);
+
+        let metadata = ChunkMetadata {
+            file_hash,
+            chunk_index: 0,
+            total_chunks: 1,
+            chunk_hash: &chunk_hash,
+            chunk_data: &data,
+            filename: "test.bin",
+            encryption: EncryptionAlgorithm::Aes256Gcm,
+        };
+
+        let event = create_chunk_event(&metadata, &content)
+            .unwrap()
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        let result = parse_chunk_event(&event, Some(&wrong_keys));
+        assert!(
+            result.is_err(),
+            "Decryption with wrong keys should fail"
+        );
     }
 }

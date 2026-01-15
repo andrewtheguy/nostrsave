@@ -4,7 +4,8 @@ A CLI tool for storing and retrieving files on the Nostr network.
 
 ## Features
 
-- **NIP-44 encryption** enabled by default (self-encrypt to own public key)
+- **AES-256-GCM encryption** enabled by default (key derived from Nostr private key)
+- **NIP-44 encryption** supported as optional mode
 - **Resumable uploads/downloads** with SQLite-based session tracking
 - **Upload files** to Nostr relays as chunked events
 - **Download files** using file hash or local manifest
@@ -51,7 +52,7 @@ cp config.sample.toml ~/.config/nostrsave/config.toml
 ### 2. Usage
 
 ```bash
-# Upload a file (encrypted by default with nip44)
+# Upload a file (encrypted by default with aes256gcm)
 nostrsave upload photo.jpg
 
 # List your indexed files
@@ -108,21 +109,21 @@ urls = [
 ]
 
 [encryption]
-# Default encryption algorithm: "nip44" (default) or "none"
-algorithm = "nip44"
+# Default encryption algorithm: "aes256gcm" (default), "nip44", or "none"
+algorithm = "aes256gcm"
 ```
 
 ### Configuration Priority
 
 1. CLI flags (`--key-file`, `--encryption`)
 2. TOML config (`config.toml`)
-3. Built-in defaults (nip44 encryption, fallback relays for index)
+3. Built-in defaults (aes256gcm encryption, fallback relays for index)
 
 ## Commands
 
 ### upload
 
-Upload a file to Nostr relays. Files are encrypted by default using NIP-44.
+Upload a file to Nostr relays. Files are encrypted by default using AES-256-GCM.
 
 ```bash
 nostrsave upload <FILE> [OPTIONS]
@@ -130,7 +131,7 @@ nostrsave upload <FILE> [OPTIONS]
 Options:
   -c, --chunk-size <BYTES>       Chunk size (1KB-65408 tested max, default: 32KB)
   -o, --output <PATH>            Save manifest locally to this path (not saved by default)
-  -e, --encryption <ALGORITHM>   Encryption: nip44 (default) or none
+  -e, --encryption <ALGORITHM>   Encryption: aes256gcm (default), nip44, or none
   -f, --force                    Force delete corrupted session without prompting
   -v, --verbose                  Verbose output
 ```
@@ -237,9 +238,9 @@ Uploads and downloads are automatically resumable. If a transfer is interrupted 
 
 ## How It Works
 
-Files are split into chunks (default 32KB), encrypted with NIP-44 (self-encryption), and published as Nostr events. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
+Files are split into chunks (default 32KB), encrypted with AES-256-GCM (key derived from your private key), and published as Nostr events. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
 
-**Encryption:** By default, chunks are encrypted using NIP-44 with your own public key. Only you can decrypt them with your private key. Use `--encryption none` to upload unencrypted files.
+**Encryption:** By default, chunks are encrypted using AES-256-GCM (key derived from your private key). Use `--encryption nip44` for NIP-44 mode (self-encryption) or `--encryption none` to upload unencrypted files.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 

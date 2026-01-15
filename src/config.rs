@@ -13,6 +13,7 @@ use url::{Host, Url};
 #[serde(rename_all = "lowercase")]
 pub enum EncryptionAlgorithm {
     #[default]
+    Aes256Gcm,
     Nip44,
     None,
 }
@@ -20,6 +21,7 @@ pub enum EncryptionAlgorithm {
 impl std::fmt::Display for EncryptionAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            EncryptionAlgorithm::Aes256Gcm => write!(f, "aes256gcm"),
             EncryptionAlgorithm::Nip44 => write!(f, "nip44"),
             EncryptionAlgorithm::None => write!(f, "none"),
         }
@@ -31,9 +33,10 @@ impl std::str::FromStr for EncryptionAlgorithm {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "aes256gcm" => Ok(EncryptionAlgorithm::Aes256Gcm),
             "nip44" => Ok(EncryptionAlgorithm::Nip44),
             "none" => Ok(EncryptionAlgorithm::None),
-            _ => Err(format!("Invalid encryption algorithm: '{}'. Use 'nip44' or 'none'", s)),
+            _ => Err(format!("Invalid encryption algorithm: '{}'. Use 'aes256gcm', 'nip44', or 'none'", s)),
         }
     }
 }
@@ -370,7 +373,7 @@ pub fn get_index_relays() -> anyhow::Result<Vec<String>> {
 // Encryption Resolution
 // ============================================================================
 
-/// Get encryption algorithm from config, or return default (Nip44)
+/// Get encryption algorithm from config, or return default (Aes256Gcm)
 pub fn get_encryption_algorithm() -> EncryptionAlgorithm {
     if let Some(config) = load_config() {
         if let Some(encryption) = config.encryption {
@@ -398,6 +401,9 @@ mod tests {
         assert!(validate_relay_url("wss://relay.example.com/nostr").is_ok());
         assert!(validate_relay_url("wss://1.2.3.4").is_ok());
         assert!(validate_relay_url("wss://[::1]").is_ok());
+        // Trailing slash normalization
+        assert_eq!(validate_relay_url("wss://relay.damus.io/").unwrap(), "wss://relay.damus.io");
+        assert_eq!(validate_relay_url("wss://nos.lol/").unwrap(), "wss://nos.lol");
     }
 
     #[test]
@@ -421,10 +427,4 @@ mod tests {
         assert!(!relays.is_empty());
         assert!(relays.iter().all(|r| r.starts_with("wss://")));
     }
-}
-
-#[test]
-fn test_validate_relay_url_normalization_extra() {
-    assert_eq!(validate_relay_url("wss://relay.damus.io/").unwrap(), "wss://relay.damus.io");
-    assert_eq!(validate_relay_url("wss://nos.lol/").unwrap(), "wss://nos.lol");
 }
