@@ -289,6 +289,23 @@ nostrsave best-relays relays-nostrwatch.json --count 5
 
 Output files are named with a source suffix: `relays-nostrwatch.json`, `relays-configured.json`, `relays-index.json`.
 
+### Persisted Discovered Relays (for Upload Rotation)
+
+In bulk mode, `discover-relays` also writes the ordered list of working relays (fastest first) into a SQLite database named `data_relays.sqlite3` in the same directory as your `config.toml`.
+
+When your config sets:
+
+```toml
+[data_relays]
+source = "discovered"
+batch_size = 6
+```
+
+uploads will select the next `batch_size` relays from that saved list (e.g., 1–6, then 7–12, etc). The DB tracks:
+
+- `discovered_relays.last_used_at` (timestamp of last selection)
+- a rolling cursor (`relay_selection_state.next_offset`) to ensure the next upload continues from the next slice
+
 ## Security Considerations
 
 - **NIP-44 encryption:** File chunks are encrypted by default
