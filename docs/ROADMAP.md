@@ -2,13 +2,12 @@
 
 ## Ideas
 
-### AES-256-GCM Chunk Encryption (see also: Passkey PRF Extension)
-Encrypt each chunk individually with AES-256-GCM before publishing:
-- Decouple encryption from Nostr identity - use separate encryption keys
-- Key derivation options: passphrase, PRF-derived, or recipient public key
-- Chunks published as "unencrypted" events (no NIP-44 wrapper), reducing overhead
-- Manifest stores key derivation parameters
-- Enables sharing encrypted files by encrypting to recipient's public key
+### Encrypted File Sharing
+Enable sharing encrypted files with specific recipients:
+- Encrypt file key using recipient's public key (NIP-44 or similar)
+- Store encrypted key parameters in the manifest
+- Allows secure sharing without revealing the uploader's private key
+- Receiver derives/decrypts the file key to decrypt chunks
 
 ### Relay Publishing Server
 An intermediate server that accepts chunk submissions and handles relay publishing:
@@ -70,7 +69,7 @@ Remove a file entry from the index:
 - Uploaded chunks and manifest remain on relays (no way to force relay deletion)
 - Useful for cleaning up index after failed uploads or unwanted entries
 
-### Passkey PRF Extension for Key Derivation (see also: AES-256-GCM Chunk Encryption)
+### Passkey PRF Extension for Key Derivation (see also: Encrypted File Sharing)
 Use WebAuthn PRF (Pseudo-Random Function) extension for hardware-backed key derivation:
 - FIDO2 authenticators (YubiKey, Touch ID, etc.) provide secure key derivation
 - Deterministic: same passkey + salt always produces same key material
