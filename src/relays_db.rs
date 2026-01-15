@@ -160,7 +160,6 @@ pub fn select_next_discovered_relay_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
 
     fn seed_relays(dir: &Path, urls: &[&str]) -> Vec<String> {
         let urls: Vec<String> = urls.iter().map(|s| s.to_string()).collect();
