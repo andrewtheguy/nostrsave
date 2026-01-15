@@ -1,5 +1,5 @@
 use crate::chunking::FileChunker;
-use crate::config::{get_data_relays, get_index_relays, get_private_key, EncryptionAlgorithm};
+use crate::config::{get_data_relays_for_upload, get_index_relays, get_private_key, EncryptionAlgorithm};
 use crate::crypto;
 use crate::manifest::Manifest;
 use crate::nostr::{
@@ -97,7 +97,7 @@ pub async fn execute(
     let private_key = get_private_key(key_file)?;
     let keys = Keys::parse(&private_key)?;
 
-    let data_relays = get_data_relays()?;
+    let data_relays = get_data_relays_for_upload()?;
     let index_relays = get_index_relays()?;
 
     // 2. Verify file exists

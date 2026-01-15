@@ -8,13 +8,19 @@ key_file = "~/.config/nostrsave/nostr.key"
 [data_relays]
 # Relays for uploading file chunks (required for upload command)
 # These relays are stored in the manifest for download
-# Run `nostrsave best-relays` after `nostrsave discover-relays` to get optimal list
+#
+# Options:
+# - source = "config" (default): use the hard-coded urls below
+# - source = "discovered": use relays from `nostrsave discover-relays` (stored in the same directory as your config.toml as `data_relays.sqlite3`)
+source = "config"
+batch_size = 6
+
 urls = [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://nostr.wine",
-    "wss://relay.primal.net",
-    "wss://relay.snort.social"
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://nostr.wine",
+  "wss://relay.primal.net",
+  "wss://relay.snort.social"
 ]
 
 # [index_relays]

@@ -5,6 +5,25 @@ use std::path::PathBuf;
 use url::{Host, Url};
 
 // ============================================================================
+// Relay Sources / Options
+// ============================================================================
+
+/// Data relay source selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DataRelaySource {
+    /// Use the URLs provided in `data_relays.urls`.
+    #[default]
+    Config,
+    /// Use relays discovered by `nostrsave discover-relays` and stored in the config directory DB.
+    Discovered,
+}
+
+fn default_data_relay_batch_size() -> usize {
+    6
+}
+
+// ============================================================================
 // Encryption Algorithm
 // ============================================================================
 
@@ -49,7 +68,7 @@ impl std::str::FromStr for EncryptionAlgorithm {
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
     pub identity: Option<IdentityConfig>,
-    pub data_relays: Option<RelaysConfig>,
+    pub data_relays: Option<DataRelaysConfig>,
     pub index_relays: Option<RelaysConfig>,
     pub encryption: Option<EncryptionConfig>,
 }
@@ -71,6 +90,22 @@ pub struct IdentityConfig {
 #[derive(Debug, Deserialize)]
 pub struct RelaysConfig {
     pub urls: Vec<String>,
+}
+
+/// Data relay configuration
+#[derive(Debug, Deserialize)]
+pub struct DataRelaysConfig {
+    /// Where to get data relays from: "config" (default) or "discovered"
+    #[serde(default)]
+    pub source: DataRelaySource,
+
+    /// Relay URLs when `source = "config"`
+    #[serde(default)]
+    pub urls: Vec<String>,
+
+    /// Number of discovered relays to use per upload (default: 6)
+    #[serde(default = "default_data_relay_batch_size")]
+    pub batch_size: usize,
 }
 
 // ============================================================================
@@ -103,6 +138,30 @@ pub const FILE_INDEX_EVENT_KIND: u16 = 30080;
 /// Get the default config file path (~/.config/nostrsave/config.toml)
 pub fn default_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config").join("nostrsave").join("config.toml"))
+}
+
+/// Get the active config directory.
+///
+/// - If a config file exists in one of the known locations, returns its parent directory.
+/// - Otherwise, returns the default config directory (~/.config/nostrsave), creating it if needed.
+pub fn active_config_dir() -> anyhow::Result<PathBuf> {
+    for path in toml_config_paths() {
+        if path.exists() {
+            return path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .ok_or_else(|| anyhow::anyhow!("Invalid config path: {}", path.display()));
+        }
+    }
+
+    let default = default_config_path().ok_or_else(|| {
+        anyhow::anyhow!("Unable to determine default config directory (no home directory)")
+    })?;
+    let dir = default
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid default config path: {}", default.display()))?;
+    std::fs::create_dir_all(dir)?;
+    Ok(dir.to_path_buf())
 }
 
 /// TOML config file locations to check (in order)
@@ -338,15 +397,66 @@ pub fn get_data_relays() -> anyhow::Result<Vec<String>> {
         )
     })?;
 
-    let relays = validate_relay_list(&data_relays.urls)?;
-
-    if relays.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No valid relay URLs in [data_relays] section"
-        ));
+    if data_relays.batch_size == 0 {
+        return Err(anyhow::anyhow!("data_relays.batch_size must be >= 1"));
     }
 
-    Ok(relays)
+    match data_relays.source {
+        DataRelaySource::Config => {
+            let relays = validate_relay_list(&data_relays.urls)?;
+            if relays.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No valid relay URLs in [data_relays] section"
+                ));
+            }
+            Ok(relays)
+        }
+        DataRelaySource::Discovered => {
+            let config_dir = active_config_dir()?;
+            let relays = crate::relays_db::list_discovered_relays(&config_dir)?;
+            if relays.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No discovered relays found.\n\
+                     Run `nostrsave discover-relays --relay-source index-relays` to populate the relay DB."
+                ));
+            }
+            Ok(relays)
+        }
+    }
+}
+
+/// Get data relays for upload. In discovered mode, returns the next batch and advances the cursor.
+pub fn get_data_relays_for_upload() -> anyhow::Result<Vec<String>> {
+    let config = require_config()?;
+    let data_relays = config.data_relays.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Missing [data_relays] section in config.\n\
+             Add data relays for uploading file chunks."
+        )
+    })?;
+
+    if data_relays.batch_size == 0 {
+        return Err(anyhow::anyhow!("data_relays.batch_size must be >= 1"));
+    }
+
+    match data_relays.source {
+        DataRelaySource::Config => {
+            let relays = validate_relay_list(&data_relays.urls)?;
+            if relays.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No valid relay URLs in [data_relays] section"
+                ));
+            }
+            Ok(relays)
+        }
+        DataRelaySource::Discovered => {
+            let config_dir = active_config_dir()?;
+            crate::relays_db::select_next_discovered_relay_batch(
+                &config_dir,
+                data_relays.batch_size,
+            )
+        }
+    }
 }
 
 /// Get index relays from config, or fallback to defaults
