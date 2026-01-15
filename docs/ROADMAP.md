@@ -81,3 +81,11 @@ Use WebAuthn PRF (Pseudo-Random Function) extension for hardware-backed key deri
 - Could integrate with web interface for browser-based key derivation
 - Requires PRF-compatible authenticator and browser support
 
+### Hierarchical Index Mode (Folder Support)
+Evolve the flat file index into a hierarchical structure using folder entries:
+- Index events store folder metadata instead of just a flat list of files
+- Folders are represented as nested objects or separate sub-index events
+- Root directory remains anchored to the user's npub
+- Enables organized file management (add/remove/rename) within a folder-based UI
+- Maintains compatibility with the existing index-based discovery mechanism
+
