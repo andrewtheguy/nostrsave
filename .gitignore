@@ -1,5 +1,4 @@
 /target
 *.nostrsave
-/target
 relays*.json
 tmp/

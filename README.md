@@ -94,10 +94,10 @@ key_file = "~/.config/nostrsave/nostr.key"
 [data_relays]
 # Where to get data relays from:
 # - "config" (default): use the hard-coded urls below
-# - "discovered": use relays saved by `nostrsave discover-relays` (stored in the same directory as your config.toml as `data_relays.sqlite3`)
+# - "discovered": use relays saved by `nostrsave discover-relays` (stored alongside your config.toml as `data_relays.sqlite3`)
 source = "config"
 
-# When `source = "discovered"`, `batch_size` controls how many relays are selected/used per upload operation.
+# `batch_size` is only used when `source = "discovered"` (ignored for `source = "config"`). It controls how many relays are selected/used per upload operation.
 # Default: 6. Recommended: 1–32 (larger values can increase throughput, but use more CPU/memory and open more connections).
 batch_size = 6
 
@@ -199,7 +199,7 @@ Options:
   --chunk-size <BYTES>    Payload size for round-trip test
 ```
 
-In bulk mode, `discover-relays` also persists the working relays list into `data_relays.sqlite3` in your config directory for use with `data_relays.source = "discovered"`.
+In bulk mode, `discover-relays` also persists the working relays list into `data_relays.sqlite3` in the same directory as your config.toml for use with `data_relays.source = "discovered"`.
 
 ### keygen
 
