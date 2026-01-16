@@ -113,6 +113,7 @@ pub async fn test_relay(url: &str, timeout: Duration, chunk_size: usize) -> Rela
     rand::thread_rng().fill(&mut test_data[..]);
     let test_hash = hex::encode(Sha256::digest(&test_data));
 
+    // Random data + zstd level 0 yields minimal compression, effectively close to "no compression".
     let compressed = match zstd_compress_with_level(&test_data, 0) {
         Ok(data) => data,
         Err(e) => {
