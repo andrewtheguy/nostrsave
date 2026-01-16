@@ -86,7 +86,7 @@ Parameterized replaceable event containing file metadata.
 
 ```
 Kind: 30079
-Content: `base85(zstd(<JSON manifest>))`
+Content: `base85(zstd(<CBOR manifest>))`
 Tags:
   - ["d", "<file_hash>"]                   # Unique identifier
   - ["x", "<file_hash>"]                   # For filtering
@@ -94,7 +94,33 @@ Tags:
   - ["size", "<total_bytes>"]              # Total file size
 ```
 
-**Manifest JSON (before zstd + base85):**
+**Manifest CBOR (before zstd + base85):**
+
+Short keys + binary fields are used for size efficiency:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `v` | uint | version |
+| `f` | text | file_name |
+| `h` | bytes(32) | file_hash (raw bytes) |
+| `s` | uint | file_size |
+| `c` | uint | chunk_size |
+| `n` | uint | total_chunks |
+| `t` | uint | created_at |
+| `p` | bytes(32) | pubkey (raw bytes) |
+| `e` | uint | encryption (0=aes256gcm, 1=nip44, 2=none) |
+| `r` | array(text) | relays |
+| `k` | array | chunks |
+
+Chunks array entries are objects with:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `i` | uint | index |
+| `e` | bytes(32) | event_id (raw bytes) |
+| `h` | bytes(32) | hash (raw bytes) |
+
+**Manifest JSON (local file / `--output`):**
 ```json
 {
   "version": 2,

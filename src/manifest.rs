@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 /// Current manifest version
-pub const CURRENT_MANIFEST_VERSION: u8 = 2;
+pub const CURRENT_MANIFEST_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -290,7 +290,7 @@ mod tests {
         let path = temp_dir.path().join("manifest.nostrsave");
 
         let json = r#"{
-            "version": 2,
+            "version": 3,
             "file_name": "test.bin",
             "file_hash": "abc123",
             "file_size": 1000,
@@ -324,7 +324,7 @@ mod tests {
         let path = temp_dir.path().join("manifest.nostrsave");
 
         let json = r#"{
-            "version": 2,
+            "version": 3,
             "file_name": "test.bin",
             "file_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "file_size": 1000,
