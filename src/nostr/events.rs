@@ -9,6 +9,7 @@ use crate::nostr::codec::{
 };
 use nostr_sdk::{EventId, PublicKey};
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 
 /// Data extracted from a chunk event
 #[derive(Debug, Clone)]
@@ -370,12 +371,15 @@ fn encode_manifest_cbor(manifest: &Manifest) -> anyhow::Result<Vec<u8>> {
         chunks,
     };
 
-    serde_cbor::to_vec(&cbor).map_err(|e| anyhow::anyhow!("CBOR encode failed: {}", e))
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&cbor, &mut out)
+        .map_err(|e| anyhow::anyhow!("CBOR encode failed: {}", e))?;
+    Ok(out)
 }
 
 fn decode_manifest_cbor(bytes: &[u8]) -> anyhow::Result<Manifest> {
-    let cbor: ManifestCbor =
-        serde_cbor::from_slice(bytes).map_err(|e| anyhow::anyhow!("CBOR decode failed: {}", e))?;
+    let cbor: ManifestCbor = ciborium::de::from_reader(Cursor::new(bytes))
+        .map_err(|e| anyhow::anyhow!("CBOR decode failed: {}", e))?;
 
     let file_hash = hex::encode(&cbor.file_hash);
     let pubkey = PublicKey::from_slice(&cbor.pubkey)?.to_bech32()?;
