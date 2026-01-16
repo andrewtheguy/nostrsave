@@ -123,7 +123,7 @@ Chunks array entries are objects with:
 **Manifest JSON (local file / `--output`):**
 ```json
 {
-  "version": 2,
+  "version": 3,
   "file_name": "photo.jpg",
   "file_hash": "abc123...",
   "file_size": 1234567,
