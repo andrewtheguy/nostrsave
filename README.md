@@ -246,7 +246,7 @@ Uploads and downloads are automatically resumable. If a transfer is interrupted 
 
 ## How It Works
 
-Files are split into chunks (default 32KB), encrypted with AES-256-GCM (key derived from your private key), and published as Nostr events. A manifest event ties all chunks together. An optional file index event tracks all your uploads.
+Files are split into chunks (default 32KB), encrypted with AES-256-GCM (key derived from your private key), and published as Nostr events. A manifest event ties all chunks together. Manifest and index events are zstd-compressed (level 9) and base85-encoded. An optional file index event tracks all your uploads.
 
 **Encryption:** By default, chunks are encrypted using AES-256-GCM (key derived from your private key). Use `--encryption nip44` for NIP-44 mode (self-encryption) or `--encryption none` to upload unencrypted files.
 

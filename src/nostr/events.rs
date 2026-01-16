@@ -4,7 +4,9 @@ use std::collections::HashSet;
 use crate::config::{EncryptionAlgorithm, CHUNK_EVENT_KIND, MANIFEST_EVENT_KIND};
 use crate::crypto;
 use crate::manifest::Manifest;
-use crate::nostr::codec::{base85_decode_json_safe, zstd_decompress};
+use crate::nostr::codec::{
+    base85_decode_json_safe, base85_encode_json_safe, zstd_compress, zstd_decompress,
+};
 
 /// Data extracted from a chunk event
 #[derive(Debug, Clone)]
@@ -233,7 +235,9 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
 
 /// Create a Nostr event for a file manifest
 pub fn create_manifest_event(manifest: &Manifest) -> anyhow::Result<EventBuilder> {
-    let content = serde_json::to_string(manifest)?;
+    let json = serde_json::to_vec(manifest)?;
+    let compressed = zstd_compress(&json)?;
+    let content = base85_encode_json_safe(&compressed);
 
     Ok(EventBuilder::new(Kind::Custom(MANIFEST_EVENT_KIND), content)
         .tag(Tag::identifier(manifest.file_hash.clone()))
@@ -262,7 +266,9 @@ pub fn create_manifest_filter(file_hash: &str) -> Filter {
 pub fn parse_manifest_event(event: &Event) -> anyhow::Result<Manifest> {
     use crate::manifest::CURRENT_MANIFEST_VERSION;
 
-    let manifest: Manifest = serde_json::from_str(&event.content)?;
+    let compressed = base85_decode_json_safe(&event.content)?;
+    let json = zstd_decompress(&compressed)?;
+    let manifest: Manifest = serde_json::from_slice(&json)?;
 
     if manifest.version != CURRENT_MANIFEST_VERSION {
         return Err(anyhow::anyhow!(
@@ -348,6 +354,35 @@ mod tests {
         let parsed = parse_chunk_event(&event, None).unwrap();
         assert_eq!(0, parsed.index);
         assert_eq!(data, parsed.data);
+    }
+
+    #[test]
+    fn test_manifest_event_roundtrip_base85_zstd() {
+        let manifest = Manifest::new(
+            "file.txt".to_string(),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            1234,
+            1024,
+            "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq".to_string(),
+            vec!["wss://relay.example.com".to_string()],
+            EncryptionAlgorithm::Aes256Gcm,
+        )
+        .unwrap();
+
+        let keys = Keys::generate();
+        let event = create_manifest_event(&manifest)
+            .unwrap()
+            .sign_with_keys(&keys)
+            .unwrap();
+        let parsed = parse_manifest_event(&event).unwrap();
+        assert_eq!(parsed.file_hash, manifest.file_hash);
+        assert_eq!(parsed.file_name, manifest.file_name);
+        assert_eq!(parsed.file_size, manifest.file_size);
+        assert_eq!(parsed.chunk_size, manifest.chunk_size);
+        assert_eq!(parsed.total_chunks, manifest.total_chunks);
+        assert_eq!(parsed.pubkey, manifest.pubkey);
+        assert_eq!(parsed.encryption, manifest.encryption);
+        assert_eq!(parsed.relays, manifest.relays);
     }
 
     #[tokio::test]
