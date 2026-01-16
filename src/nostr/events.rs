@@ -7,6 +7,9 @@ use crate::manifest::Manifest;
 use crate::nostr::codec::{
     base85_decode_json_safe, base85_encode_json_safe, zstd_compress, zstd_decompress,
 };
+use nostr_sdk::{EventId, PublicKey};
+use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 
 /// Data extracted from a chunk event
 #[derive(Debug, Clone)]
@@ -235,8 +238,8 @@ pub fn parse_chunk_event(event: &Event, keys: Option<&Keys>) -> anyhow::Result<C
 
 /// Create a Nostr event for a file manifest
 pub fn create_manifest_event(manifest: &Manifest) -> anyhow::Result<EventBuilder> {
-    let json = serde_json::to_vec(manifest)?;
-    let compressed = zstd_compress(&json)?;
+    let cbor = encode_manifest_cbor(manifest)?;
+    let compressed = zstd_compress(&cbor)?;
     let content = base85_encode_json_safe(&compressed);
 
     Ok(EventBuilder::new(Kind::Custom(MANIFEST_EVENT_KIND), content)
@@ -267,8 +270,8 @@ pub fn parse_manifest_event(event: &Event) -> anyhow::Result<Manifest> {
     use crate::manifest::CURRENT_MANIFEST_VERSION;
 
     let compressed = base85_decode_json_safe(&event.content)?;
-    let json = zstd_decompress(&compressed)?;
-    let manifest: Manifest = serde_json::from_slice(&json)?;
+    let cbor = zstd_decompress(&compressed)?;
+    let manifest = decode_manifest_cbor(&cbor)?;
 
     if manifest.version != CURRENT_MANIFEST_VERSION {
         return Err(anyhow::anyhow!(
@@ -279,6 +282,136 @@ pub fn parse_manifest_event(event: &Event) -> anyhow::Result<Manifest> {
     }
 
     Ok(manifest)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ManifestCbor {
+    #[serde(rename = "v")]
+    version: u8,
+    #[serde(rename = "f")]
+    file_name: String,
+    #[serde(rename = "h")]
+    file_hash: Vec<u8>,
+    #[serde(rename = "s")]
+    file_size: u64,
+    #[serde(rename = "c")]
+    chunk_size: usize,
+    #[serde(rename = "n")]
+    total_chunks: usize,
+    #[serde(rename = "t")]
+    created_at: u64,
+    #[serde(rename = "p")]
+    pubkey: Vec<u8>,
+    #[serde(rename = "e")]
+    encryption: u8,
+    #[serde(rename = "r")]
+    relays: Vec<String>,
+    #[serde(rename = "k")]
+    chunks: Vec<ManifestChunkCbor>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ManifestChunkCbor {
+    #[serde(rename = "i")]
+    index: usize,
+    #[serde(rename = "e")]
+    event_id: Vec<u8>,
+    #[serde(rename = "h")]
+    hash: Vec<u8>,
+}
+
+fn encryption_to_u8(enc: EncryptionAlgorithm) -> u8 {
+    match enc {
+        EncryptionAlgorithm::Aes256Gcm => 0,
+        EncryptionAlgorithm::Nip44 => 1,
+        EncryptionAlgorithm::None => 2,
+    }
+}
+
+fn encryption_from_u8(value: u8) -> anyhow::Result<EncryptionAlgorithm> {
+    match value {
+        0 => Ok(EncryptionAlgorithm::Aes256Gcm),
+        1 => Ok(EncryptionAlgorithm::Nip44),
+        2 => Ok(EncryptionAlgorithm::None),
+        _ => Err(anyhow::anyhow!("Invalid encryption value: {}", value)),
+    }
+}
+
+fn encode_manifest_cbor(manifest: &Manifest) -> anyhow::Result<Vec<u8>> {
+    let file_hash = hex::decode(&manifest.file_hash)
+        .map_err(|e| anyhow::anyhow!("Invalid file_hash hex: {}", e))?;
+    let pubkey = PublicKey::parse(&manifest.pubkey)?.to_bytes().to_vec();
+
+    let chunks = manifest
+        .chunks
+        .iter()
+        .map(|chunk| {
+            let event_id = EventId::parse(&chunk.event_id)?.to_bytes().to_vec();
+            let hash = hex::decode(&chunk.hash)
+                .map_err(|e| anyhow::anyhow!("Invalid chunk hash hex: {}", e))?;
+            Ok(ManifestChunkCbor {
+                index: chunk.index,
+                event_id,
+                hash,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let cbor = ManifestCbor {
+        version: manifest.version,
+        file_name: manifest.file_name.clone(),
+        file_hash,
+        file_size: manifest.file_size,
+        chunk_size: manifest.chunk_size,
+        total_chunks: manifest.total_chunks,
+        created_at: manifest.created_at,
+        pubkey,
+        encryption: encryption_to_u8(manifest.encryption),
+        relays: manifest.relays.clone(),
+        chunks,
+    };
+
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&cbor, &mut out)
+        .map_err(|e| anyhow::anyhow!("CBOR encode failed: {}", e))?;
+    Ok(out)
+}
+
+fn decode_manifest_cbor(bytes: &[u8]) -> anyhow::Result<Manifest> {
+    let cbor: ManifestCbor = ciborium::de::from_reader(Cursor::new(bytes))
+        .map_err(|e| anyhow::anyhow!("CBOR decode failed: {}", e))?;
+
+    let file_hash = hex::encode(&cbor.file_hash);
+    let pubkey = PublicKey::from_slice(&cbor.pubkey)?.to_bech32()?;
+    let encryption = encryption_from_u8(cbor.encryption)?;
+
+    let chunks = cbor
+        .chunks
+        .into_iter()
+        .map(|chunk| {
+            let event_id = EventId::from_slice(&chunk.event_id)?.to_bech32()?;
+            let hash = hex::encode(chunk.hash);
+            Ok(crate::manifest::ChunkInfo {
+                index: chunk.index,
+                event_id,
+                hash,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    Ok(Manifest {
+        version: cbor.version,
+        file_name: cbor.file_name,
+        file_hash,
+        file_size: cbor.file_size,
+        chunk_size: cbor.chunk_size,
+        total_chunks: cbor.total_chunks,
+        created_at: cbor.created_at,
+        pubkey,
+        chunks,
+        relays: cbor.relays,
+        encryption,
+    })
 }
 
 #[cfg(test)]
@@ -358,18 +491,18 @@ mod tests {
 
     #[test]
     fn test_manifest_event_roundtrip_base85_zstd() {
+        let keys = Keys::generate();
         let manifest = Manifest::new(
             "file.txt".to_string(),
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
             1234,
             1024,
-            "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq".to_string(),
+            keys.public_key().to_bech32().unwrap(),
             vec!["wss://relay.example.com".to_string()],
             EncryptionAlgorithm::Aes256Gcm,
         )
         .unwrap();
 
-        let keys = Keys::generate();
         let event = create_manifest_event(&manifest)
             .unwrap()
             .sign_with_keys(&keys)
