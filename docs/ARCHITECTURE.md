@@ -63,7 +63,7 @@ Parameterized replaceable event storing one file chunk.
 
 ```
 Kind: 30078
-Content: <base85-wrapped payload>
+Content: `<base85-wrapped payload>`
 Tags:
   - ["d", "<file_hash>:<chunk_index>"]     # Unique identifier
   - ["x", "<file_hash>"]                   # File hash for filtering
@@ -74,9 +74,9 @@ Tags:
   - ["encryption", "aes256gcm|nip44|none"]  # Encryption algorithm
 
 Content encoding:
-- If `encryption = aes256gcm`: `base85( aes256gcm_encrypt( zstd(chunk_bytes) ) )`
-- If `encryption = nip44`: `base85( nip44_encrypt( zstd(chunk_bytes) ) )`
-- If `encryption = none`: `base85( zstd(chunk_bytes) )`
+- If `encryption = aes256gcm`: `base85(aes256gcm_encrypt(zstd(chunk_bytes)))`
+- If `encryption = nip44`: `base85(nip44_encrypt(zstd(chunk_bytes)))`
+- If `encryption = none`: `base85(zstd(chunk_bytes))`
 - Note: zstd checksums are disabled to save space.
 ```
 
@@ -120,7 +120,7 @@ Parameterized replaceable events listing a user's files across pages. Index cont
 
 ```
 Kind: 30080
-Content: <base85( zstd(JSON file index) )>
+Content: `base85(zstd(<JSON file index>))`
 Tags:
   - ["d", "nostrsave-index"]               # Current index (page 1)
   - ["d", "nostrsave-index-archive-<n>"]   # Archive pages (n >= 1)
