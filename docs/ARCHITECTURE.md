@@ -86,7 +86,7 @@ Parameterized replaceable event containing file metadata.
 
 ```
 Kind: 30079
-Content: <JSON manifest>
+Content: `base85(zstd(<JSON manifest>))`
 Tags:
   - ["d", "<file_hash>"]                   # Unique identifier
   - ["x", "<file_hash>"]                   # For filtering
@@ -94,7 +94,7 @@ Tags:
   - ["size", "<total_bytes>"]              # Total file size
 ```
 
-**Manifest JSON:**
+**Manifest JSON (before zstd + base85):**
 ```json
 {
   "version": 2,
