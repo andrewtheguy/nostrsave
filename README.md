@@ -15,9 +15,9 @@ A CLI tool for storing and retrieving files on the Nostr network.
 
 ## Disclaimer
 
-**Long-term storage is not guaranteed.** File persistence depends entirely on the Nostr relays you use. Relays may delete data at any time, go offline, or impose storage limits. Always keep local backups of important files. This tool is best suited for short term file sharing or as a temporary storage solution, not as a primary storage solution or for backup purposes.
+**Hobby project:** This is a hobby project. No backward compatibility is expected between versions.
 
-**Pre-release warning:** This program is still pre-release. Expect ongoing breaking changes to formats and behavior until the formats are finalized.
+**Long-term storage is not guaranteed.** File persistence depends entirely on the Nostr relays you use. Relays may delete data at any time, go offline, or impose storage limits. Always keep local backups of important files. This tool is best suited for short term file sharing or as a temporary storage solution, not as a primary storage solution or for backup purposes.
 
 ## Installation
 
