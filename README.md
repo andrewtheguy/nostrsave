@@ -2,6 +2,12 @@
 
 A CLI tool for storing and retrieving files on the Nostr network.
 
+## Disclaimer
+
+**Hobby project:** This is a hobby project. No backward compatibility is expected between versions.
+
+**Long-term storage is not guaranteed.** File persistence depends entirely on the Nostr relays you use. Relays may delete data at any time, go offline, or impose storage limits. Always keep local backups of important files. This tool is best suited for short term file sharing or as a temporary storage solution, not as a primary storage solution or for backup purposes.
+
 ## Features
 
 - **AES-256-GCM encryption** enabled by default (key derived from Nostr private key)
@@ -12,12 +18,6 @@ A CLI tool for storing and retrieving files on the Nostr network.
 - **File index** automatically maintained on your public key
 - **Relay discovery** with round-trip testing
 - **TOML configuration** with key file support
-
-## Disclaimer
-
-**Hobby project:** This is a hobby project. No backward compatibility is expected between versions.
-
-**Long-term storage is not guaranteed.** File persistence depends entirely on the Nostr relays you use. Relays may delete data at any time, go offline, or impose storage limits. Always keep local backups of important files. This tool is best suited for short term file sharing or as a temporary storage solution, not as a primary storage solution or for backup purposes.
 
 ## Installation
 
