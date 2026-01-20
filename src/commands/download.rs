@@ -122,6 +122,7 @@ async fn fetch_manifest_from_relays(
 ) -> anyhow::Result<Manifest> {
     let keys = Keys::generate();
     let filter = create_manifest_filter(file_hash);
+    let mut relay_errors: Vec<String> = Vec::new();
 
     for relay_url in relays {
         if verbose {
@@ -129,7 +130,8 @@ async fn fetch_manifest_from_relays(
         }
 
         let client = Client::new(keys.clone());
-        if client.add_relay(relay_url).await.is_err() {
+        if let Err(e) = client.add_relay(relay_url).await {
+            relay_errors.push(format!("{}: failed to add relay: {}", relay_url, e));
             continue;
         }
 
@@ -145,14 +147,18 @@ async fn fetch_manifest_from_relays(
                             return Ok(manifest);
                         }
                         Err(e) => {
+                            relay_errors.push(format!("{}: failed to parse manifest: {}", relay_url, e));
                             if verbose {
                                 warn!("Failed to parse manifest: {}", e);
                             }
                         }
                     }
+                } else {
+                    relay_errors.push(format!("{}: no manifest event found", relay_url));
                 }
             }
             Err(e) => {
+                relay_errors.push(format!("{}: fetch error: {}", relay_url, e));
                 if verbose {
                     warn!("Fetch error: {}", e);
                 }
@@ -162,7 +168,15 @@ async fn fetch_manifest_from_relays(
         client.disconnect().await;
     }
 
-    Err(anyhow::anyhow!("Manifest not found on any relay"))
+    let error_details = if relay_errors.is_empty() {
+        "no relays configured".to_string()
+    } else {
+        relay_errors.join("\n  ")
+    };
+    Err(anyhow::anyhow!(
+        "Manifest not found on any relay. Details:\n  {}",
+        error_details
+    ))
 }
 
 pub async fn execute(

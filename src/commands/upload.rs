@@ -478,12 +478,33 @@ pub async fn execute(
     // 9. Publish manifest to data relays
     println!("\nPublishing manifest to data relays...");
     let manifest_event = create_manifest_event(&manifest)?;
-    match client.send_event_builder(manifest_event.clone()).await {
-        Ok(_) => {}
+    let data_relay_output = match client.send_event_builder(manifest_event.clone()).await {
+        Ok(output) => output,
         Err(e) => {
             return Err(anyhow::anyhow!("Failed to publish manifest: {}", e));
         }
     };
+
+    // Report data relay publish status
+    let data_success = data_relay_output.success.len();
+    let data_failed = data_relay_output.failed.len();
+    println!(
+        "  Manifest accepted by {}/{} data relays",
+        data_success,
+        data_success + data_failed
+    );
+    if verbose {
+        for url in &data_relay_output.success {
+            println!("    OK: {}", url);
+        }
+        for (url, err) in &data_relay_output.failed {
+            println!("    FAILED: {}: {}", url, err);
+        }
+    } else if !data_relay_output.failed.is_empty() {
+        for (url, err) in &data_relay_output.failed {
+            warn!("Data relay {}: {}", url, err);
+        }
+    }
 
     // 7b. Also publish file index to data relays for redundancy
     println!("Publishing file index to data relays...");
@@ -606,13 +627,52 @@ async fn publish_to_index_relays(
     }
 
     // 2. Publish manifest to index relays
-    let manifest_event_id = match client.send_event_builder(manifest_event).await {
-        Ok(output) => output.val.to_bech32()?,
+    let output = match client.send_event_builder(manifest_event).await {
+        Ok(output) => output,
         Err(e) => {
             client.disconnect().await;
             return Err(anyhow::anyhow!("Failed to publish manifest to index relays: {}", e));
         }
     };
+
+    let manifest_event_id = output.val.to_bech32()?;
+
+    // Report which relays accepted the manifest
+    let success_count = output.success.len();
+    let failed_count = output.failed.len();
+
+    if success_count == 0 {
+        client.disconnect().await;
+        let failed_details: Vec<String> = output
+            .failed
+            .iter()
+            .map(|(url, err)| format!("{}: {}", url, err))
+            .collect();
+        return Err(anyhow::anyhow!(
+            "Manifest was not accepted by any index relay. Failed relays:\n  {}",
+            failed_details.join("\n  ")
+        ));
+    }
+
+    println!(
+        "  Manifest accepted by {}/{} index relays",
+        success_count,
+        success_count + failed_count
+    );
+
+    if verbose {
+        for url in &output.success {
+            println!("    OK: {}", url);
+        }
+        for (url, err) in &output.failed {
+            println!("    FAILED: {}: {}", url, err);
+        }
+    } else if !output.failed.is_empty() {
+        // Show failures even without verbose mode so user knows something went wrong
+        for (url, err) in &output.failed {
+            warn!("Index relay {}: {}", url, err);
+        }
+    }
 
     // 3. Update file index on index relays
     publish_file_index_to_relays(&client, keys, entry, verbose).await?;
